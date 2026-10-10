@@ -1,4 +1,4 @@
-// Betting slip for Fly Poker.
+// Betting slip for Full House-flies.
 // Plain DOM, no dependencies, so it sits on top of the Three.js canvas without touching it.
 //
 //   import { initBetting } from './ui/betting.js';

@@ -112,8 +112,11 @@ try {
   });
   const title = mountTitle(() => {
     entered = true;
+    view.controls.autoRotate = false;
     hud.show();
   });
+  view.controls.autoRotate = true;
+  view.controls.autoRotateSpeed = 0.6;
 
   let table = createTable({ seed: liveSeed() });
   let entered = false;

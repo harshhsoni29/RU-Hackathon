@@ -38,7 +38,7 @@ export function mountHud() {
     <header class="top">
       <div class="brand">
         <p class="eyebrow">On the rail</p>
-        <h1>Fly poker</h1>
+        <h1>Full House-flies</h1>
       </div>
       <div class="status">
         <p class="street" data-street>Waiting</p>
