@@ -6,6 +6,7 @@ export const FLIES = Object.freeze([
   Object.freeze({ id: 'nib', name: 'Nib', style: 'tight-passive', accessory: 'monocle', color: 0x3d5a80 }),
   Object.freeze({ id: 'callie', name: 'Callie', style: 'loose-passive', accessory: 'bow', color: 0xd4537e }),
   Object.freeze({ id: 'mani', name: 'Mani', style: 'maniac', accessory: 'crown', color: 0xc23b22 }),
+  Object.freeze({ id: 'soni', name: 'Soni', style: 'copycat', accessory: 'sunglasses', color: 0x7b5cd6 }),
 ]);
 
 export const DEALER = Object.freeze({ id: 'chip', name: 'Chip', kind: 'beetle' });
@@ -31,6 +32,10 @@ export const STYLE_META = Object.freeze({
     label: 'Maniac',
     summary: 'Extremely wide range and constant aggression. High variance, thin value, and frequent bluffs.',
   }),
+  copycat: Object.freeze({
+    label: 'Copycat',
+    summary: 'Has no style of its own. Each hand it follows one other fly, plays that fly\'s style, and leans toward repeating its last move. It learns whom to follow and how closely.',
+  }),
 });
 
 const KEYS = ['vpip', 'pfr', 'aggression', 'bluff', 'foldToPressure', 'learnRate'];
@@ -41,6 +46,7 @@ export const DEFAULT_STYLES = Object.freeze({
   nib: Object.freeze({ vpip: 0.11, pfr: 0.07, aggression: 0.55, bluff: 0.02, foldToPressure: 0.8, learnRate: 0.04 }),
   callie: Object.freeze({ vpip: 0.52, pfr: 0.08, aggression: 0.4, bluff: 0.03, foldToPressure: 0.16, learnRate: 0.05 }),
   mani: Object.freeze({ vpip: 0.7, pfr: 0.58, aggression: 5.5, bluff: 0.58, foldToPressure: 0.1, learnRate: 0.07 }),
+  soni: Object.freeze({ vpip: 0.34, pfr: 0.2, aggression: 1.9, bluff: 0.18, foldToPressure: 0.45, learnRate: 0.05 }),
 });
 
 function clamp(x, lo, hi) {

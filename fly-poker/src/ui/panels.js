@@ -6,6 +6,7 @@ const STYLE = {
   'tight-passive': 'Tight-pass',
   'loose-passive': 'Loose-pass',
   maniac: 'Maniac',
+  copycat: 'Copycat',
 };
 
 function el(html) {

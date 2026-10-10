@@ -9,6 +9,7 @@ const FLIES = [
   { id: 'nib', name: 'Nib', style: 'tight-passive', accessory: 'monocle', color: 0x3d5a80 },
   { id: 'callie', name: 'Callie', style: 'loose-passive', accessory: 'bow', color: 0xd4537e },
   { id: 'mani', name: 'Mani', style: 'maniac', accessory: 'crown', color: 0xc23b22 },
+  { id: 'soni', name: 'Soni', style: 'copycat', accessory: 'sunglasses', color: 0x7b5cd6 },
 ];
 
 const NODES = [

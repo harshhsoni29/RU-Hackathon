@@ -16,6 +16,7 @@ const PREF = {
   'tight-passive': ['check', 'call', 'fold', 'bet', 'raise'],
   'loose-passive': ['call', 'check', 'fold', 'bet', 'raise'],
   maniac: ['raise', 'bet', 'call', 'check', 'fold'],
+  copycat: ['call', 'check', 'fold', 'bet', 'raise'],
 };
 
 function clamp(x, lo, hi) {
@@ -260,6 +261,10 @@ export function decide(ctx) {
   applyStyle(rich, logits, notes);
   if (ctx.facingName && ctx.toCall > 0) {
     notes.push(`${ctx.facingName}'s learned aggression ${ctx.oppAggression.toFixed(2)} is in the fold bias`);
+  }
+  if (ctx.bias) {
+    for (const [action, pull] of Object.entries(ctx.bias)) logits[action] += pull;
+    if (ctx.biasNote) notes.push(ctx.biasNote);
   }
   for (const action of ACTIONS) {
     if (!ctx.legal.includes(action)) logits[action] = -1e9;

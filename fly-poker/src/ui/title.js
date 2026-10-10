@@ -35,13 +35,14 @@ export function mountTitle(onEnter) {
       ${LOGO}
       <p class="eyebrow">Live from the rail</p>
       <h1>Full House<span>-flies</span></h1>
-      <p>Five flies are already in their chairs, each with a small brain that rewires itself after every hand. You are on the rail, watching a game you are not in.</p>
+      <p>Six flies are already in their chairs, each with a small brain that rewires itself after every hand. One of them only copies the others. You are on the rail, watching a game you are not in.</p>
       <ul>
         <li><i style="background:#1f7a4d"></i> Vera</li>
         <li><i style="background:#d4892a"></i> Buzz</li>
         <li><i style="background:#3d5a80"></i> Nib</li>
         <li><i style="background:#d4537e"></i> Callie</li>
         <li><i style="background:#c23b22"></i> Mani</li>
+        <li><i style="background:#7b5cd6"></i> Soni</li>
       </ul>
       <button type="button" data-enter>Take the rail</button>
     </div>

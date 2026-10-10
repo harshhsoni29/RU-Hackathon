@@ -116,6 +116,26 @@ function addAccessory(head, kind) {
     })));
     jewel.position.set(0, 0.14, -0.1);
     head.add(jewel);
+  } else if (kind === 'sunglasses') {
+    const glass = new THREE.MeshStandardMaterial({ color: 0x07060c, metalness: 0.7, roughness: 0.12, emissive: 0x2a1650, emissiveIntensity: 0.25 });
+    const lensGeo = new THREE.CylinderGeometry(0.082, 0.07, 0.02, 18);
+    const rimGeo = new THREE.TorusGeometry(0.08, 0.009, 6, 18);
+    for (const side of [-1, 1]) {
+      const lens = shade(new THREE.Mesh(lensGeo, glass));
+      lens.rotation.x = Math.PI / 2;
+      lens.scale.set(1.15, 1, 0.85);
+      lens.position.set(side * 0.1, 0.035, -0.175);
+      const rim = shade(new THREE.Mesh(rimGeo, gold));
+      rim.scale.set(1.15, 0.85, 1);
+      rim.position.copy(lens.position);
+      const arm = shade(new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.014, 0.2), gold));
+      arm.position.set(side * 0.19, 0.05, -0.08);
+      arm.rotation.y = side * -0.12;
+      head.add(lens, rim, arm);
+    }
+    const bridge = shade(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.012), gold));
+    bridge.position.set(0, 0.06, -0.18);
+    head.add(bridge);
   }
 }
 

@@ -1,7 +1,7 @@
 """
 Poker betting backend template (FastAPI + SQLite)
 
-Fixed-odds "who wins the hand" betting on the poker players (NUM_PLAYERS seats, default 5),
+Fixed-odds "who wins the hand" betting on the poker players (NUM_PLAYERS seats, default 6),
 the way a sportsbook prices a poker broadcast:
   - When a round opens, the house posts decimal odds for every seat. They are priced from each
     player's smoothed win rate in past settled rounds, with a house margin (MARGIN_BPS) built in.
@@ -40,7 +40,7 @@ ODDS_PRIOR = 3                                                  # pseudo-wins pe
 ODDS_HISTORY = 200                                              # settled rounds used to price the odds
 MIN_BET = 100                                                   # $1.00
 MAX_BET = 1_000_000                                             # $10,000.00
-NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "5"))                # seats at the table (the fly table seats 5)
+NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "6"))                # seats at the table (the fly table seats 6)
 STARTING_BALANCE = int(os.getenv("STARTING_BALANCE", "100000"))  # play-money bankroll for new players ($1,000); 0 = real-money mode
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"                    # enables /deposit; set 0 in production
 CORS_ORIGINS = os.getenv(
@@ -150,7 +150,7 @@ def change_balance(conn, user_id: int, delta: int, kind: str, ref: str = "") -> 
 def pool_totals(bets: List[dict]) -> Dict[int, int]:
     totals = {seat: 0 for seat in range(1, NUM_PLAYERS + 1)}
     for b in bets:
-        totals[b["seat"]] += b["amount"]
+        totals[b["seat"]] = totals.get(b["seat"], 0) + b["amount"]
     return totals
 
 
@@ -251,8 +251,8 @@ def round_view(conn, r) -> dict:
     bets = [dict(b) for b in conn.execute(
         "SELECT id, seat, amount FROM bets WHERE round_id = ?", (r["id"],))]
     pools = pool_totals(bets)
-    odds = json.loads(r["odds"]) if r["odds"] else [None] * NUM_PLAYERS
     players = json.loads(r["players"])
+    odds = json.loads(r["odds"]) if r["odds"] else [None] * len(players)
     return {
         "id": r["id"],
         "status": r["status"],
@@ -260,9 +260,9 @@ def round_view(conn, r) -> dict:
         "winner_seats": json.loads(r["winner_seats"]) if r["winner_seats"] else None,
         "total_pool": sum(pools.values()),
         "players": [
-            {"seat": s, "name": players[s - 1], "pool": pools[s],
+            {"seat": s, "name": players[s - 1], "pool": pools.get(s, 0),
              "odds": odds[s - 1] / 100 if odds[s - 1] else None}
-            for s in range(1, NUM_PLAYERS + 1)
+            for s in range(1, len(players) + 1)
         ],
     }
 

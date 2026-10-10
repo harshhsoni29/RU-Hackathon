@@ -27,14 +27,15 @@ export const TABLE = {
 
 export const SEAT = { rx: 6.3, rz: 5.0 };
 
-/** Dealer takes the left end. Flies leave a gap at +Z for the rail camera. */
+/** Dealer takes the left end. Flies sit 45° apart and leave a gap at +Z for the rail camera. */
 export const DEALER_ANGLE = Math.PI;
 export const SEATS = [
-  { id: 'vera', angle: (240 * Math.PI) / 180 },
-  { id: 'buzz', angle: (300 * Math.PI) / 180 },
-  { id: 'nib', angle: 0 },
-  { id: 'callie', angle: (60 * Math.PI) / 180 },
-  { id: 'mani', angle: (120 * Math.PI) / 180 },
+  { id: 'vera', angle: (225 * Math.PI) / 180 },
+  { id: 'buzz', angle: (270 * Math.PI) / 180 },
+  { id: 'nib', angle: (315 * Math.PI) / 180 },
+  { id: 'callie', angle: 0 },
+  { id: 'mani', angle: (45 * Math.PI) / 180 },
+  { id: 'soni', angle: (135 * Math.PI) / 180 },
 ];
 
 export function ovalPoint(angle, rx, rz, origin = TABLE) {

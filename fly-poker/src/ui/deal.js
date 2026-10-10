@@ -23,6 +23,7 @@ const FALLBACK_ANGLE = {
   nib: (30 * Math.PI) / 180,
   callie: (150 * Math.PI) / 180,
   mani: (90 * Math.PI) / 180,
+  soni: (135 * Math.PI) / 180,
 };
 
 const HOLE_STAGGER = 0.1;

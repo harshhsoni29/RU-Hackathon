@@ -10,7 +10,7 @@ import main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 ENGINE = {"X-API-Key": main.ENGINE_API_KEY}
-NAMES = ["Vera", "Buzz", "Nib", "Callie", "Mani"][: main.NUM_PLAYERS]
+NAMES = ["Vera", "Buzz", "Nib", "Callie", "Mani", "Soni"][: main.NUM_PLAYERS]
 
 
 # ----------------------------------------------------------------- pure payout math
@@ -90,16 +90,16 @@ def test_full_round_pays_winners_at_posted_odds(client):
     a, b = make_user(client, "a"), make_user(client, "b")
     rid = new_round(client)
     view = client.get(f"/rounds/{rid}").json()
-    assert all(p["odds"] == 4.76 for p in view["players"])   # no history yet: even odds
+    assert all(p["odds"] == 5.71 for p in view["players"])   # no history yet: even 6-way odds less the margin
     assert place(client, a, rid, 1, 1000).status_code == 200
     assert place(client, b, rid, 2, 3000).status_code == 200
     assert client.get(f"/rounds/{rid}").json()["players"][0]["pool"] == 1000
 
     assert client.post(f"/rounds/{rid}/lock", headers=ENGINE).status_code == 200
     res = client.post(f"/rounds/{rid}/settle", json={"winner_seats": [1]}, headers=ENGINE).json()
-    assert res["outcome"] == "settled" and res["house_take"] == 4000 - 4760
+    assert res["outcome"] == "settled" and res["house_take"] == 4000 - 5710
 
-    assert balance(client, a) == 10_000 - 1000 + 4760
+    assert balance(client, a) == 10_000 - 1000 + 5710
     assert balance(client, b) == 10_000 - 3000
 
 

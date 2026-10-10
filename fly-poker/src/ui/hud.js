@@ -6,6 +6,7 @@ const STYLE = {
   'tight-passive': 'Tight-passive',
   'loose-passive': 'Loose-passive',
   maniac: 'Maniac',
+  copycat: 'Copycat',
 };
 
 function esc(value) {
@@ -65,7 +66,6 @@ export function mountHud() {
       <div class="stats" data-stats></div>
     </footer>
     <p class="error" data-error hidden></p>
-    <p class="hint">Drag to look · scroll to zoom · Esc closes the brain</p>
   `;
   document.body.appendChild(root);
 
@@ -144,7 +144,7 @@ export function mountHud() {
       plate.classList.toggle('folded', !!seat.folded || seat.stack === 0);
       plate.querySelector('.who').textContent = seat.name;
       plate.querySelector('.chips').textContent = seat.stack;
-      plate.querySelector('.meta').textContent = STYLE[seat.style] || seat.style || '';
+      plate.querySelector('.meta').textContent = (STYLE[seat.style] || seat.style || '') + (seat.following ? ` · copying ${seat.following}` : '');
     });
   }
 

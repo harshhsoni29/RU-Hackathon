@@ -12,7 +12,7 @@ import { createTable, dealHand, step, getPublicState } from "../src/contract.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
-const FLY_IDS = ["vera", "buzz", "nib", "callie", "mani"];
+const FLY_IDS = ["vera", "buzz", "nib", "callie", "mani", "soni"];
 
 function parseArgs(argv) {
   const args = { hands: 1000, seeds: [42, 99], maxSteps: 260, stack: 20000, quiet: false };

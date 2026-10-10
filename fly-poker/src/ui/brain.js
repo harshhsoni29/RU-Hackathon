@@ -1555,6 +1555,10 @@ function spanOf(before, after) {
   return ` (${before.toFixed(3)} → ${after.toFixed(3)})`;
 }
 
+function pctSpan(before, after) {
+  return ` (${Math.round(before * 100)}% → ${Math.round(after * 100)}%)`;
+}
+
 function learnedLines(inspection) {
   const last = inspection?.learning?.last;
   if (!last) return ['Nothing has been learned yet.'];
@@ -1570,6 +1574,10 @@ function learnedLines(inspection) {
       const link = parameter.slice(5).replace('->', ' → ');
       const verb = Number(delta.delta) < 0 ? 'eased' : 'strengthened';
       lines.push(`${hand}: synapse ${link} ${verb}${span}.`);
+    } else if (parameter.startsWith('follow.')) {
+      lines.push(`${hand}: ${delta.why}, so the chance of following them moved${pctSpan(delta.before, delta.after)}.`);
+    } else if (parameter === 'copyStrength') {
+      lines.push(`${hand}: ${delta.why}, so copy strength moved${span}.`);
     } else if (parameter === 'aggression' || parameter === 'bluff' || parameter === 'foldToPressure') {
       const label = parameter === 'foldToPressure' ? 'Fold-to-pressure' : parameter === 'bluff' ? 'Bluff rate' : 'Aggression';
       lines.push(`${hand}: ${label} nudged${span}.`);
@@ -1605,6 +1613,10 @@ function badgeOf(accessory, color) {
   } else if (accessory === 'crown') {
     add('path', { d: 'M6 32 L10 16 L18 24 L24 10 L30 24 L38 16 L42 32 Z' });
     add('rect', { x: 6, y: 32, width: 36, height: 5 });
+  } else if (accessory === 'sunglasses') {
+    add('rect', { x: 4, y: 17, width: 40, height: 3, rx: 1.5 });
+    add('path', { d: 'M7 19h15c0 8-3 12-8 12s-7-4-7-12z' });
+    add('path', { d: 'M26 19h15c0 8-2 12-7 12s-8-4-8-12z' });
   } else {
     add('circle', { cx: 24, cy: 24, r: 8 });
   }

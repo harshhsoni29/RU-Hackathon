@@ -36,7 +36,7 @@ def main():
     ap.add_argument("--split-chance", type=float, default=0.1, help="chance of a 2-way tie")
     args = ap.parse_args()
 
-    names = ["Vera", "Buzz", "Nib", "Callie", "Mani"]   # same order as fly-poker FLIES (seat = index + 1)
+    names = ["Vera", "Buzz", "Nib", "Callie", "Mani", "Soni"]   # same order as fly-poker FLIES (seat = index + 1)
     n = 0
     while args.rounds == 0 or n < args.rounds:
         n += 1

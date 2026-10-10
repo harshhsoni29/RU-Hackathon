@@ -54,7 +54,7 @@ body::after {
 
 #hud { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 
-.top, .log, .inspect, .dock, .error, .hint { pointer-events: auto; }
+.top, .log, .inspect, .dock, .error { pointer-events: auto; }
 
 .top {
   position: absolute;
@@ -101,7 +101,7 @@ body::after {
   color: var(--brass);
 }
 
-.sub, .empty, .hint, .meta {
+.sub, .empty, .meta {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 13px;
@@ -283,17 +283,6 @@ button.ghost { background: transparent; }
   color: #ffd0d0;
 }
 
-.hint {
-  position: absolute;
-  top: 118px;
-  left: 50%;
-  transform: translateX(-50%);
-  margin: 0;
-  pointer-events: none;
-  text-shadow: 0 1px 2px #000;
-  white-space: nowrap;
-}
-
 @media (max-width: 800px) {
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .bet-bank-amt { font-size: 20px; }
@@ -303,13 +292,12 @@ button.ghost { background: transparent; }
   .brand h1 { font-size: 18px; }
   .street, .pot { font-size: 20px; }
   .log { display: none; }
-  .hint { display: none; }
 }
 
 /* ================= betting (merged into the dock) ================= */
 
 /* bankroll + chip picker, top-right of the dock */
-.bet-bar { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; }
+.bet-bar { display: flex; align-items: center; gap: 14px; flex-wrap: nowrap; margin-left: auto; }
 .bet-bank { display: grid; grid-template-columns: auto auto; column-gap: 8px; align-items: baseline; }
 .bet-bank-label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
 .bet-bank-amt { font: 600 24px/1 Palatino, Georgia, serif; color: var(--brass); font-variant-numeric: tabular-nums; }
@@ -326,6 +314,7 @@ button.ghost { background: transparent; }
 .bet-chip[data-tier="5"]   { --chip: #b8432f; --edge: #f6efe4; --ink: #f6efe4; }
 .bet-chip[data-tier="25"]  { --chip: #8a5a32; --edge: #f6efe4; --ink: #f6efe4; }
 .bet-chip[data-tier="100"] { --chip: #1c100c; --edge: #e6c27a; --ink: #e6c27a; }
+.bet-chip[data-tier="500"] { --chip: #4b2a78; --edge: #e6c27a; --ink: #f6efe4; }
 .bet-chip-face {
   position: absolute; inset: 5px; display: grid; place-items: center;
   font-weight: 700; font-size: 11px; color: var(--ink); font-variant-numeric: tabular-nums;
@@ -472,8 +461,12 @@ html[data-bet="open"] .bet-timer-bar i { animation: bet-drain var(--ms, 10s) lin
 @keyframes bet-drain { to { transform: scaleX(0); } }
 .bet-timer[data-low="true"] .bet-timer-num { color: var(--brick); }
 .bet-timer[data-low="true"] .bet-timer-bar i { background: var(--brick); }
-.bet-skip { padding: 6px 16px; font-weight: 700; color: var(--brass); background: #3a2418; border-color: var(--brass); }
+.bet-skip { padding: 5px 14px; font-size: 13px; font-weight: 700; color: var(--brass); background: #3a2418; border-color: var(--brass); }
 .bet-skip:hover { background: #4a2c1c; }
+.bet-lock { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 6px; pointer-events: auto; }
+.bet-lock[hidden] { display: none; }
+.bet-lock .bet-timer { padding: 3px 12px; }
+.bet-lock .bet-timer-num { font-size: 18px; }
 
 /* the "!" that offers a new bet during auto-play */
 .bet-alert {

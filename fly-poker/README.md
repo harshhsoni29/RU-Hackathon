@@ -23,7 +23,7 @@ Run the betting backend alongside the room:
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --port 8000 --reload # NUM_PLAYERS defaults to 5 (one seat per fly)
+uvicorn main:app --port 8000 --reload # NUM_PLAYERS defaults to 6 (one seat per fly)
 python simulate_engine.py             # optional: fake engine that opens/locks/settles rounds
 ```
 

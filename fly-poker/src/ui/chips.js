@@ -208,7 +208,7 @@ function seatedIds(layer) {
   if (Array.isArray(seats) && seats.length) {
     return seats.map((seat) => seat && seat.id).filter(Boolean);
   }
-  return ['vera', 'buzz', 'nib', 'callie', 'mani'];
+  return ['vera', 'buzz', 'nib', 'callie', 'mani', 'soni'];
 }
 
 function colorFor(layer, flyId) {

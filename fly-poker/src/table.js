@@ -6,6 +6,7 @@ import { legalActions, applyAction, roundComplete, nextActor, firstPostflopActor
 import { settlePots } from './poker/pots.js';
 import { decide } from './brains/policy.js';
 import { learnFromHand } from './brains/learning.js';
+import { copyBias, copyTarget, emptyMimic, followShares, learnMimic, pickMentor } from './brains/mimic.js';
 import { createBrain, NODES, CIRCUIT_META } from './brains/circuit.js';
 import {
   FLIES,
@@ -149,6 +150,23 @@ function buildContext(table, seat, legal) {
   };
 }
 
+/** A copycat plays with the style of the fly it follows this hand and leans toward that fly's last move. */
+function followContext(table, fly, ctx) {
+  const mentor = fly.mimic && table.flies.find((other) => other.id === fly.mimic.mentor);
+  if (!mentor) return ctx;
+  const target = copyTarget(table.hand.log, mentor.id, table.hand.street, ctx.legal);
+  return {
+    ...ctx,
+    style: mentor.style,
+    params: mentor.params,
+    bias: copyBias(fly.mimic, target),
+    copyTarget: target,
+    biasNote: target
+      ? `Copying ${mentor.name}'s ${target.seen} (copy strength ${fly.mimic.copy.toFixed(2)})`
+      : `Following ${mentor.name}'s style; ${mentor.name} has not acted yet`,
+  };
+}
+
 function publicDecision(decision) {
   return {
     live: false,
@@ -218,6 +236,7 @@ export function createTable(config = {}) {
       since: null,
     },
     model: Object.fromEntries(FLIES.filter((other) => other.id !== meta.id).map((other) => [other.id, emptyModel()])),
+    mimic: meta.style === 'copycat' ? emptyMimic(FLIES.filter((other) => other.id !== meta.id).map((other) => other.id)) : null,
     stats: emptyStats(),
     lastDecision: null,
     lastActivity: null,
@@ -285,7 +304,14 @@ export function dealHand(table) {
   for (let round = 0; round < 2; round++) {
     for (const i of order) players[i].hole.push(deck.pop());
   }
-  for (const fly of table.flies) fly.pending = [];
+  for (const fly of table.flies) {
+    fly.pending = [];
+    if (!fly.mimic) continue;
+    const candidates = players.filter((p) => p.inHand && p.id !== fly.id).map((p) => p.id);
+    fly.mimic.mentor = pickMentor(fly.mimic, candidates, () => table.rng.next());
+    fly.mimic.copied = 0;
+    fly.mimic.decisions = 0;
+  }
   table.handNumber += 1;
   table.button = button;
   table.phase = 'betting';
@@ -314,6 +340,38 @@ export function dealHand(table) {
     finishHand(table, blankResult(table), showdown);
   }
   return table;
+}
+
+function learnToFollow(table, fly, record, names) {
+  const results = {};
+  for (const p of table.hand.players) {
+    if (p.inHand && p.id !== fly.id) results[p.id] = Math.tanh((p.stack - p.handStartStack) / (8 * table.bigBlind));
+  }
+  const { mimic } = fly;
+  const deltas = learnMimic(mimic, {
+    reward: record.reward,
+    results,
+    copiedShare: mimic.decisions ? mimic.copied / mimic.decisions : 0,
+    names,
+  });
+  record.deltas.unshift(...deltas);
+  const shares = followShares(mimic);
+  const [top] = Object.entries(shares).sort((a, b) => b[1] - a[1]);
+  record.summary = `Followed ${names[mimic.mentor]} · now leans toward ${names[top[0]]} (${Math.round(top[1] * 100)}%), copy strength ${mimic.copy.toFixed(2)}`;
+}
+
+function mimicView(table, fly) {
+  if (!fly.mimic) return null;
+  const names = Object.fromEntries(table.flies.map((other) => [other.id, other.name]));
+  const shares = followShares(fly.mimic);
+  return {
+    mentor: fly.mimic.mentor,
+    mentorName: names[fly.mimic.mentor] || null,
+    copyStrength: fly.mimic.copy,
+    follow: Object.entries(shares)
+      .map(([id, share]) => ({ id, name: names[id], share }))
+      .sort((a, b) => b.share - a.share),
+  };
 }
 
 function notePolicyMove(fly, record, handNumber) {
@@ -357,9 +415,14 @@ export function step(table) {
   if (seat < 0) throw new Error('no player to act');
   const legal = legalActions(hand, seat);
   if (legal.length === 0) throw new Error('actor has no legal action');
-  const decision = decide(buildContext(table, seat, legal));
-  const applied = applyAction(hand, seat, decision.action, decision.raiseTo);
   const fly = table.flies[seat];
+  const ctx = followContext(table, fly, buildContext(table, seat, legal));
+  const decision = decide(ctx);
+  const applied = applyAction(hand, seat, decision.action, decision.raiseTo);
+  if (ctx.copyTarget) {
+    fly.mimic.decisions += 1;
+    if (applied.action === ctx.copyTarget.action) fly.mimic.copied += 1;
+  }
   fly.pending.push({
     drive: decision.drive,
     chosen: ['fold', 'check', 'call', 'bet', 'raise'].indexOf(applied.action),
@@ -372,7 +435,7 @@ export function step(table) {
   shown.allIn = applied.allIn;
   fly.lastDecision = shown;
   fly.lastActivity = decision.activity.slice();
-  const frozen = decide({ ...buildContext(table, seat, legal), brain: fly.frozenBrain, params: fly.frozenParams });
+  const frozen = decide({ ...ctx, brain: fly.frozenBrain, params: fly.mimic ? ctx.params : fly.frozenParams });
   fly.policyCompare.decisions += 1;
   if (frozen.action !== applied.action) fly.policyCompare.disagreements += 1;
   fly.policyCompare.lastLive = applied.action;
@@ -467,6 +530,7 @@ function finishHand(table, result, showdown) {
       selfId: fly.id,
       names,
     });
+    if (fly.mimic?.mentor) learnToFollow(table, fly, learned, names);
     fly.stats.handsPlayed += 1;
     fly.stats.netChips += chipsDelta;
     if ((paid.get(fly.id) || 0) > (committed.get(fly.id) || 0)) fly.stats.handsWon += 1;
@@ -483,7 +547,7 @@ function finishHand(table, result, showdown) {
     }
     if (vpip) fly.stats.vpipHands += 1;
     if (pfr) fly.stats.pfrHands += 1;
-    rememberProfile(fly, table.handNumber);
+    rememberProfile(table, fly, table.handNumber);
     notePolicyMove(fly, learned, table.handNumber);
   }
 
@@ -576,6 +640,7 @@ export function getPublicState(table) {
       isBigBlind: bb === i,
       isActor: hand ? hand.actor === i : false,
       stats: publicStats(fly),
+      following: fly.mimic && hand ? table.flies.find((other) => other.id === fly.mimic.mentor)?.name || null : null,
     };
   });
   let leader = table.flies[0];
@@ -658,9 +723,9 @@ function unit(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function rememberProfile(fly, handNumber) {
+function rememberProfile(table, fly, handNumber) {
   if (!Array.isArray(fly.profileHistory)) fly.profileHistory = [];
-  const profile = strategyProfile(fly);
+  const profile = strategyProfile(table, fly);
   fly.profileHistory.push({
     handNumber,
     values: profile.axes.map((axis) => axis.value),
@@ -668,17 +733,30 @@ function rememberProfile(fly, handNumber) {
   if (fly.profileHistory.length > 40) fly.profileHistory.shift();
 }
 
+/** A copycat plays with the parameters of whoever it follows, so its own are a share-weighted blend. */
+function playedParams(table, fly) {
+  if (!fly.mimic) return fly.params;
+  const shares = followShares(fly.mimic);
+  const blend = { vpip: 0, pfr: 0, aggression: 0, bluff: 0, foldToPressure: 0, learnRate: fly.params.learnRate };
+  for (const other of table.flies) {
+    const share = shares[other.id] || 0;
+    for (const key of ['vpip', 'pfr', 'aggression', 'bluff', 'foldToPressure']) blend[key] += share * other.params[key];
+  }
+  return blend;
+}
+
 /** Radar values from the live parameters, swapped to counted rates after 3 hands. */
-function strategyProfile(fly) {
+function strategyProfile(table, fly) {
+  const params = playedParams(table, fly);
   const hands = fly.stats.handsPlayed || 0;
   const folds = fly.stats.folds || 0;
   const checks = fly.stats.checks || 0;
   const actions = (fly.stats.betsRaises || 0) + (fly.stats.calls || 0) + folds + checks;
   const observed = hands >= 3 && actions > 0;
-  const aggParam = fly.params.aggression / (fly.params.aggression + 1.5);
+  const aggParam = params.aggression / (params.aggression + 1.5);
   const observedAgg = actions ? fly.stats.betsRaises / actions : aggParam;
-  const observedRisk = hands ? fly.stats.vpipHands / hands : fly.params.vpip;
-  const observedFold = actions ? folds / actions : fly.params.foldToPressure;
+  const observedRisk = hands ? fly.stats.vpipHands / hands : params.vpip;
+  const observedFold = actions ? folds / actions : params.foldToPressure;
   return {
     hands,
     source: observed ? 'observed' : 'model',
@@ -694,32 +772,38 @@ function strategyProfile(fly) {
         key: 'aggression',
         label: 'Aggression',
         value: unit(observed ? observedAgg : aggParam),
-        detail: observed ? 'share of actions that bet or raised' : `parameter ${fly.params.aggression.toFixed(2)}`,
+        detail: observed ? 'share of actions that bet or raised' : `parameter ${params.aggression.toFixed(2)}`,
       },
       {
         key: 'bluff',
         label: 'Bluff frequency',
-        value: unit(fly.params.bluff),
-        detail: `learned bluff ${fly.params.bluff.toFixed(2)}`,
+        value: unit(params.bluff),
+        detail: `learned bluff ${params.bluff.toFixed(2)}`,
       },
       {
         key: 'risk',
         label: 'Risk tolerance',
-        value: unit(observed ? observedRisk : fly.params.vpip),
-        detail: observed ? 'observed preflop entry' : `VPIP parameter ${fly.params.vpip.toFixed(2)}`,
+        value: unit(observed ? observedRisk : params.vpip),
+        detail: observed ? 'observed preflop entry' : `VPIP parameter ${params.vpip.toFixed(2)}`,
       },
       {
         key: 'respond',
         label: 'Response to bets',
-        value: unit(fly.params.foldToPressure),
-        detail: `fold-to-pressure ${fly.params.foldToPressure.toFixed(2)}`,
+        value: unit(params.foldToPressure),
+        detail: `fold-to-pressure ${params.foldToPressure.toFixed(2)}`,
       },
       {
         key: 'fold',
         label: 'Willingness to fold',
-        value: unit(observed ? observedFold : fly.params.foldToPressure),
+        value: unit(observed ? observedFold : params.foldToPressure),
         detail: observed ? 'share of actions that folded' : 'same fold-to-pressure parameter',
       },
+      ...(fly.mimic ? [{
+        key: 'copy',
+        label: 'Copying',
+        value: unit(fly.mimic.copy),
+        detail: `copy strength ${fly.mimic.copy.toFixed(2)}; bluff and response to bets are blended from the flies it follows`,
+      }] : []),
     ],
   };
 }
@@ -732,7 +816,7 @@ export function getFlyInspection(table, flyId) {
   if (table.phase === 'betting' && table.hand && table.hand.actor === fly.seat) {
     const legal = legalActions(table.hand, fly.seat);
     if (legal.length > 0) {
-      const live = decide(buildContext(table, fly.seat, legal));
+      const live = decide(followContext(table, fly, buildContext(table, fly.seat, legal)));
       decision = publicDecision(live);
       decision.live = true;
       activity = live.activity;
@@ -762,7 +846,7 @@ export function getFlyInspection(table, flyId) {
       base: { ...fly.base },
       current: { ...fly.params },
     },
-    profile: strategyProfile(fly),
+    profile: strategyProfile(table, fly),
     decision,
     nodes: NODES.map((node) => ({ id: node.id, layer: node.layer, x: node.x, y: node.y, label: node.label })),
     activity: activity.slice(),
@@ -785,5 +869,6 @@ export function getFlyInspection(table, flyId) {
       }),
     ),
     circuit: { ...CIRCUIT_META },
+    mimic: mimicView(table, fly),
   };
 }

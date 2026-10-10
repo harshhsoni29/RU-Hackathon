@@ -27,7 +27,7 @@ const DEFAULTS = {
   dev: new URLSearchParams(location.search).has('dev'),
 };
 
-const CHIPS = [100, 500, 2500, 10000];   // cents: $1 $5 $25 $100
+const CHIPS = [100, 500, 2500, 10000, 50000];   // cents: $1 $5 $25 $100 $500
 const MIN_BET = 100;
 const MAX_BET = 1_000_000;
 
@@ -405,12 +405,12 @@ export function initBetting(options = {}) {
   const timerNum = el('strong', 'bet-timer-num', '10s');
   const timerBar = el('div', 'bet-timer-bar');
   timerBar.append(el('i'));
-  const skipBtn = el('button', 'bet-skip', 'Skip');
+  const skipBtn = el('button', 'bet-skip', 'Lock in bets');
   skipBtn.type = 'button';
-  skipBtn.setAttribute('aria-label', 'Skip the countdown and close betting');
+  skipBtn.setAttribute('aria-label', 'Keep the current bets and close betting now');
   skipBtn.addEventListener('click', () => endWindow('skipped'));
   const timerBox = el('div', 'bet-timer');
-  timerBox.append(el('span', 'bet-timer-label', 'Bets close in'), timerNum, timerBar, skipBtn);
+  timerBox.append(el('span', 'bet-timer-label', 'Bets close in'), timerNum, timerBar);
 
   const clearBtn = el('button', 'bet-clear', 'Clear bets');
   clearBtn.type = 'button';
@@ -418,7 +418,11 @@ export function initBetting(options = {}) {
 
   // everything that slides away between windows
   const panel = el('div', 'bet-panel');
-  panel.append(timerBox, chipRow, clearBtn, rebuyBtn);
+  panel.append(clearBtn, rebuyBtn, chipRow);
+
+  // countdown + "Lock in bets" sit in the header under the round status
+  const lockRow = el('div', 'bet-lock');
+  lockRow.append(timerBox, skipBtn);
 
   // the "!" shown during auto-play when a new bet can be placed
   const SVG = 'http://www.w3.org/2000/svg';
@@ -437,6 +441,7 @@ export function initBetting(options = {}) {
   alertBtn.addEventListener('click', () => finishOffer(true));
 
   if (barHost) barHost.append(bank, panel, alertBtn);
+  if (betline) betline.after(lockRow);
 
   // ---------------------------------------------------------------- DOM: overlay (toast, result, dev)
   const overlay = el('div', 'bet-overlay');
@@ -514,7 +519,6 @@ export function initBetting(options = {}) {
   function render() {
     const r = state.round;
     const open = isOpen();
-    const left = ui.phase === 'open' ? Math.max(0, Math.ceil((ui.endsAt - Date.now()) / 1000)) : null;
     const phase = !state.online ? 'offline' : r ? r.status : 'idle';
 
     // header line
@@ -528,9 +532,7 @@ export function initBetting(options = {}) {
         : r.status === 'locked' ? 'Bets locked'
         : r.status === 'settled' ? 'Round settled'
         : 'Round called off';
-      const bits = [label];
-      if (left !== null) bits.push(left + 's');
-      betline.textContent = bits.join(' · ');
+      betline.textContent = label;
       betline.dataset.phase = phase;
     }
 
@@ -547,6 +549,7 @@ export function initBetting(options = {}) {
     clearBtn.hidden = !(open && total);
     alertBtn.hidden = ui.phase !== 'prompt';
     panel.toggleAttribute('inert', ui.phase !== 'open');
+    lockRow.hidden = ui.phase !== 'open';
 
     // per-seat cards
     const mineBySeat = {};

@@ -18,7 +18,7 @@ import { parseCodes } from "../src/poker/cards.js";
 import { applyAction, legalActions } from "../src/poker/betting.js";
 import { CATEGORY, evaluate } from "../src/poker/evaluator.js";
 
-const FLY_IDS = ["vera", "buzz", "nib", "callie", "mani"];
+const FLY_IDS = ["vera", "buzz", "nib", "callie", "mani", "soni"];
 
 function hand(codes) {
   return evaluate(parseCodes(codes));
