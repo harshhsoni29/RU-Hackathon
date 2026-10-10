@@ -1,0 +1,160 @@
+{
+  "styles": {
+    "vera": {
+      "vpip": 0.2,
+      "pfr": 0.16,
+      "aggression": 2.6,
+      "bluff": 0.06,
+      "foldToPressure": 0.58,
+      "learnRate": 0.03
+    },
+    "buzz": {
+      "vpip": 0.34,
+      "pfr": 0.22,
+      "aggression": 2.2,
+      "bluff": 0.14,
+      "foldToPressure": 0.55,
+      "learnRate": 0.04
+    },
+    "nib": {
+      "vpip": 0.1,
+      "pfr": 0.06,
+      "aggression": 0.9,
+      "bluff": 0.02,
+      "foldToPressure": 0.84,
+      "learnRate": 0.02
+    },
+    "callie": {
+      "vpip": 0.55,
+      "pfr": 0.06,
+      "aggression": 0.45,
+      "bluff": 0.03,
+      "foldToPressure": 0.2,
+      "learnRate": 0.03
+    },
+    "mani": {
+      "vpip": 0.78,
+      "pfr": 0.5,
+      "aggression": 4.2,
+      "bluff": 0.45,
+      "foldToPressure": 0.12,
+      "learnRate": 0.05
+    }
+  },
+  "runs": [
+    {
+      "seed": 42,
+      "hands": 1000,
+      "requested": 1000,
+      "bigBlind": 10,
+      "startingStack": 1000,
+      "ms": 62,
+      "handsPerSec": 16249,
+      "steps": 1799,
+      "rows": [
+        {
+          "id": "vera",
+          "chips": 4052,
+          "delta": 3052,
+          "bb100": 30.5,
+          "handsPlayed": 1000,
+          "handsWon": 515,
+          "entryRate": 0.122
+        },
+        {
+          "id": "buzz",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 3,
+          "handsWon": 0,
+          "entryRate": 0.333
+        },
+        {
+          "id": "nib",
+          "chips": 948,
+          "delta": -52,
+          "bb100": -0.5,
+          "handsPlayed": 1000,
+          "handsWon": 407,
+          "entryRate": 0.067
+        },
+        {
+          "id": "callie",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 3,
+          "handsWon": 1,
+          "entryRate": 0.667
+        },
+        {
+          "id": "mani",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 115,
+          "handsWon": 77,
+          "entryRate": 0.565
+        }
+      ]
+    },
+    {
+      "seed": 99,
+      "hands": 1000,
+      "requested": 1000,
+      "bigBlind": 10,
+      "startingStack": 1000,
+      "ms": 61,
+      "handsPerSec": 16436,
+      "steps": 3010,
+      "rows": [
+        {
+          "id": "vera",
+          "chips": 4508,
+          "delta": 3508,
+          "bb100": 35.1,
+          "handsPlayed": 1000,
+          "handsWon": 378,
+          "entryRate": 0.153
+        },
+        {
+          "id": "buzz",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 738,
+          "handsWon": 335,
+          "entryRate": 0.283
+        },
+        {
+          "id": "nib",
+          "chips": 492,
+          "delta": -508,
+          "bb100": -5.1,
+          "handsPlayed": 1000,
+          "handsWon": 281,
+          "entryRate": 0.068
+        },
+        {
+          "id": "callie",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 1,
+          "handsWon": 0,
+          "entryRate": 1
+        },
+        {
+          "id": "mani",
+          "chips": 0,
+          "delta": -1000,
+          "bb100": -10,
+          "handsPlayed": 18,
+          "handsWon": 7,
+          "entryRate": 0.5
+        }
+      ]
+    }
+  ]
+}
