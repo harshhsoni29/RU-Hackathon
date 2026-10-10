@@ -43,6 +43,7 @@ export function mountHud() {
       <div class="status">
         <p class="street" data-street>Waiting</p>
         <p class="sub" data-sub>Click a fly to open its brain</p>
+        <p class="betline" data-betline></p>
       </div>
       <div class="potline">
         <p class="pot" data-pot>Pot 0</p>
@@ -51,12 +52,15 @@ export function mountHud() {
     </header>
     <aside class="log" data-log></aside>
     <footer class="dock">
-      <div class="controls">
-        <button type="button" data-deal>Deal</button>
-        <button type="button" data-next>Next</button>
-        <button type="button" data-auto>Auto-play</button>
-        <label class="speed">Speed <input type="range" min="1" max="8" value="4" data-speed /> <span data-speed-label>0.6s</span></label>
-        <button type="button" data-reset class="ghost">Reset</button>
+      <div class="dock-top">
+        <div class="controls">
+          <button type="button" data-deal>Deal</button>
+          <button type="button" data-next>Next</button>
+          <button type="button" data-auto>Auto-play</button>
+          <label class="speed">Speed <input type="range" min="1" max="8" value="4" data-speed /> <span data-speed-label>0.6s</span></label>
+          <button type="button" data-reset class="ghost">Reset</button>
+        </div>
+        <div class="bet-bar" data-bet-bar></div>
       </div>
       <div class="stats" data-stats></div>
     </footer>
@@ -111,23 +115,37 @@ export function mountHud() {
     paintStats(state, selectedId);
   }
 
+  /** One column per fly: a bet card ([data-bet-seat], filled by betting.js) above the name plate. Updated in place so bet buttons survive renders. */
   function paintStats(state, selectedId) {
     const seats = state?.seats || [];
-    stats.innerHTML = seats.map((seat) => {
+    const key = seats.map((seat) => seat.id).join('|');
+    if (stats.dataset.key !== key) {
+      stats.dataset.key = key;
+      stats.style.setProperty('--cols', String(Math.max(1, seats.length)));
+      stats.innerHTML = seats.map((seat, i) => `
+        <div class="seat">
+          <div class="bet-slot" data-bet-seat="${i + 1}"></div>
+          <button type="button" class="plate" data-fly="${esc(seat.id)}">
+            <span class="who"></span>
+            <span class="chips"></span>
+            <span class="meta"></span>
+          </button>
+        </div>`).join('');
+      document.dispatchEvent(new CustomEvent('seats-built'));
+    }
+    seats.forEach((seat, i) => {
+      const col = stats.children[i];
+      if (!col) return;
       const accent = seat.colorHex || `#${Number(seat.color || 0).toString(16).padStart(6, '0')}`;
-      const classes = [
-        'plate',
-        seat.isActor ? 'acting' : '',
-        seat.id === selectedId ? 'picked' : '',
-        seat.folded || seat.stack === 0 ? 'folded' : '',
-      ].filter(Boolean).join(' ');
-      const style = STYLE[seat.style] || seat.style || '';
-      return `<button type="button" class="${classes}" data-fly="${esc(seat.id)}" style="--fly:${esc(accent)}">
-        <span class="who">${esc(seat.name)}</span>
-        <span class="chips">${esc(seat.stack)}</span>
-        <span class="meta">${esc(style)}</span>
-      </button>`;
-    }).join('');
+      col.style.setProperty('--fly', accent);
+      const plate = col.querySelector('.plate');
+      plate.classList.toggle('acting', !!seat.isActor);
+      plate.classList.toggle('picked', seat.id === selectedId);
+      plate.classList.toggle('folded', !!seat.folded || seat.stack === 0);
+      plate.querySelector('.who').textContent = seat.name;
+      plate.querySelector('.chips').textContent = seat.stack;
+      plate.querySelector('.meta').textContent = STYLE[seat.style] || seat.style || '';
+    });
   }
 
   function paintLog(state) {

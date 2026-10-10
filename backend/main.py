@@ -1,7 +1,7 @@
 """
 Poker betting backend template (FastAPI + SQLite)
 
-Pari-mutuel betting on 6 poker players:
+Pari-mutuel betting on the poker players (NUM_PLAYERS seats, default 5):
   - All bets for a round go into one pool.
   - The house takes a rake (RAKE_BPS, basis points) off the top.
   - The remaining pool is shared among bettors who backed the winning player(s),
@@ -37,10 +37,12 @@ ENGINE_API_KEY = os.getenv("ENGINE_API_KEY", "dev-engine-key")  # shared secret 
 RAKE_BPS = int(os.getenv("RAKE_BPS", "500"))                    # 500 = 5%
 MIN_BET = 100                                                   # $1.00
 MAX_BET = 1_000_000                                             # $10,000.00
-NUM_PLAYERS = 6
+NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "5"))                # seats at the table (the fly table seats 5)
+STARTING_BALANCE = int(os.getenv("STARTING_BALANCE", "100000"))  # play-money bankroll for new players ($1,000); 0 = real-money mode
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"                    # enables /deposit; set 0 in production
 CORS_ORIGINS = os.getenv(
-    "CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
+    "CORS_ORIGINS",
+    "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8765,http://localhost:8765").split(",")
 
 app = FastAPI(title="Poker Betting API")
 app.add_middleware(
@@ -63,7 +65,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS rounds (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     status        TEXT NOT NULL DEFAULT 'open',      -- open|locked|settled|cancelled
-    players       TEXT NOT NULL,                     -- JSON list of 6 player names (seat = index+1)
+    players       TEXT NOT NULL,                     -- JSON list of player names (seat = index+1)
     rake_bps      INTEGER NOT NULL,
     closes_at     REAL,                              -- optional unix ts: betting auto-closes
     winner_seats  TEXT,                              -- JSON list, set on settle
@@ -74,7 +76,7 @@ CREATE TABLE IF NOT EXISTS bets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     round_id    INTEGER NOT NULL REFERENCES rounds(id),
     user_id     INTEGER NOT NULL REFERENCES users(id),
-    seat        INTEGER NOT NULL CHECK (seat BETWEEN 1 AND 6),
+    seat        INTEGER NOT NULL CHECK (seat >= 1),
     amount      INTEGER NOT NULL CHECK (amount > 0),
     payout      INTEGER,                             -- NULL until settled
     status      TEXT NOT NULL DEFAULT 'active',      -- active|won|lost|refunded
@@ -222,7 +224,7 @@ class BetCreate(BaseModel):
 
 class SettleRequest(BaseModel):
     winner_seats: List[int] = Field(min_length=1, max_length=NUM_PLAYERS,
-                                    description="seat numbers 1-6; multiple on a split pot")
+                                    description="seat numbers 1..NUM_PLAYERS; multiple on a split pot")
 
 
 # --------------------------------------------------------------------------- #
@@ -264,7 +266,26 @@ def create_user(body: UserCreate):
             cur = conn.execute("INSERT INTO users (username) VALUES (?)", (body.username,))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Username taken")
-        return {"id": cur.lastrowid, "username": body.username, "balance": 0}
+        if STARTING_BALANCE > 0:
+            change_balance(conn, cur.lastrowid, STARTING_BALANCE, "bonus", "starting bankroll")
+        return {"id": cur.lastrowid, "username": body.username, "balance": STARTING_BALANCE}
+
+
+@app.post("/users/{user_id}/rebuy")
+def rebuy(user_id: int):
+    """Play-money mode: a player who is out of chips (and has no bets in play) gets a fresh bankroll."""
+    if STARTING_BALANCE <= 0:
+        raise HTTPException(403, "Rebuys are disabled")
+    with tx() as conn:
+        u = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()
+        if not u:
+            raise HTTPException(404, "User not found")
+        if u["balance"] >= MIN_BET:
+            raise HTTPException(409, "You still have chips to bet")
+        if conn.execute("SELECT 1 FROM bets WHERE user_id=? AND status='active' LIMIT 1", (user_id,)).fetchone():
+            raise HTTPException(409, "Wait for your bets to finish first")
+        change_balance(conn, user_id, STARTING_BALANCE - u["balance"], "rebuy")
+        return {"user_id": user_id, "balance": STARTING_BALANCE}
 
 
 @app.post("/users/{user_id}/deposit")
@@ -362,7 +383,7 @@ def lock_round(round_id: int):
 def settle_round(round_id: int, body: SettleRequest):
     """Engine calls this with the winning seat(s). Idempotent-safe: a round can only settle once."""
     if any(not (1 <= s <= NUM_PLAYERS) for s in body.winner_seats):
-        raise HTTPException(422, "Seats must be 1-6")
+        raise HTTPException(422, f"Seats must be 1-{NUM_PLAYERS}")
 
     with tx() as conn:
         r = get_round(conn, round_id)

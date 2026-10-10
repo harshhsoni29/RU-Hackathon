@@ -8,8 +8,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600&family=Young+Serif&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./src/ui/styles.css" />
-  <link rel="stylesheet" href="./src/ui/betting.css" />
-  <link rel="stylesheet" href="./src/ui/styles.css" />
   <style>
     #title {
       position: fixed;
@@ -107,13 +105,5 @@
   <canvas id="view"></canvas>
   <div id="boot">Loading the poker room…</div>
   <script type="module" src="./src/main.js"></script>
-  <script type="module">
-    import { initBetting } from './src/ui/betting.js';
-    // Exposed on window so main.js can call window.flyBetting.selectSeat(n) when a fly is clicked.
-    window.flyBetting = initBetting({
-      apiBase: 'http://127.0.0.1:8000',
-      playerNames: ['Fly 1', 'Fly 2', 'Fly 3', 'Fly 4', 'Fly 5', 'Fly 6'], // match your scene's flies
-    });
-  </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import { mountHud } from './ui/hud.js';
 import { TABLE, createRailView } from './ui/room.js';
 import { mountTitle } from './ui/title.js';
 import { mountBetView } from './ui/betview.js';
+import { initBetting } from './ui/betting.js';
 
 const boot = document.getElementById('boot');
 const canvas = document.getElementById('view');
@@ -110,11 +111,21 @@ try {
     getDealModule: () => dealMod,
     getDealLayer: () => dealLayer,
   });
+
+  // Backend seat N is the Nth fly. betting.js needs the HUD's dock and header mounted first.
+  const betting = initBetting({ playerNames: FLIES.map((fly) => fly.name) });
+  const seatOf = (flyId) => FLIES.findIndex((fly) => fly.id === flyId) + 1;
+  /** Auto-play: how long a finished hand stays on screen before the "!" bet prompt. */
+  const HOLD_MS = 2500;
+  let wasLive = false;
+  let betDeadline = 0;
+
   const title = mountTitle(() => {
     entered = true;
     view.controls.autoRotate = false;
     view.controls.reset();
     hud.show();
+    betting.openWindow({ stillWanted: () => !wasLive });
   });
   view.controls.autoRotate = true;
   view.controls.autoRotateSpeed = 0.6;
@@ -127,10 +138,22 @@ try {
   let selectedId = null;
   const winners = new Set();
 
+  /** A hand just ended: settle bets on the winning seats, then reopen betting when playing by hand. */
+  function settleBets(state) {
+    if (wasLive && !state.handLive) {
+      const seats = (state.lastSettlement?.winners || []).map((w) => seatOf(w.id)).filter(Boolean);
+      betting.settle([...new Set(seats)]).then(() => {
+        if (!wasLive && !auto) betting.openWindow({ stillWanted: () => !wasLive && !auto });
+      });
+    }
+    wasLive = state.handLive;
+  }
+
   function refresh() {
     const state = getPublicState(table);
     cast.updateTags(state, winners);
     hud.render(state, { busy, selectedId });
+    settleBets(state);
     if (selectedId && brain && !brain.hidden && brain.classList.contains('is-open') && brainMod?.showBrain) {
       try {
         brainMod.showBrain(brain, getFlyInspection(table, selectedId));
@@ -171,6 +194,7 @@ try {
   function stopAuto() {
     auto = false;
     clearTimeout(timer);
+    betting.cancelOffer();
     hud.setAuto(false);
   }
 
@@ -181,6 +205,7 @@ try {
   }
 
   async function playDeal() {
+    await betting.lock();
     winners.clear();
     dealHand(table);
     const state = refresh();
@@ -208,18 +233,47 @@ try {
     return action;
   }
 
+  /**
+   * Between hands in auto-play: finish any open window, otherwise hold on the winner, then offer the "!".
+   * Returns false when auto-play stopped or the loop should poll again later.
+   */
+  async function betBeforeDeal() {
+    if (betting.windowOpen) {
+      await betting.waitWindow();
+      return auto;
+    }
+    if (betting.readyToDeal) return true;
+    if (!betDeadline) betDeadline = Date.now() + (betting.online ? HOLD_MS : 0);
+    if (Date.now() < betDeadline) {
+      timer = setTimeout(tick, 250);
+      return false;
+    }
+    betDeadline = 0;
+    const wantsToBet = betting.online && await betting.offer();
+    if (!auto) return false;
+    if (wantsToBet) {
+      await betting.openWindow({ stillWanted: () => auto });
+    } else {
+      await betting.ensureOpen();
+      await betting.rebet();
+    }
+    return auto;
+  }
+
   async function tick() {
     if (!auto || !entered) return;
     if (busy) {
       timer = setTimeout(tick, 40);
       return;
     }
+    const state = getPublicState(table);
+    if (!state.handLive && state.canDeal && !(await betBeforeDeal())) return;
     busy = true;
     hud.render(getPublicState(table), { busy, selectedId });
     try {
-      const state = getPublicState(table);
-      if (state.handLive) await playStep();
-      else if (state.canDeal) await playDeal();
+      const now = getPublicState(table);
+      if (now.handLive) await playStep();
+      else if (now.canDeal) await playDeal();
       else {
         stopAuto();
         refresh();
@@ -301,6 +355,10 @@ try {
     hud.setError('');
     table = createTable({ seed: liveSeed() });
     winners.clear();
+    wasLive = false;
+    betDeadline = 0;
+    betting.forget();
+    betting.cancel().then(() => betting.openWindow({ stillWanted: () => !wasLive }));
     selectedId = null;
     if (brain && brainMod?.hideBrain) brainMod.hideBrain(brain);
     refresh();
