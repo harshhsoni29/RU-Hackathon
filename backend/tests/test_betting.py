@@ -10,7 +10,7 @@ import main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 ENGINE = {"X-API-Key": main.ENGINE_API_KEY}
-NAMES = ["Ant", "Bee", "Cricket", "Dragonfly", "Earwig", "Firefly"]
+NAMES = ["Vera", "Buzz", "Nib", "Callie", "Mani"][: main.NUM_PLAYERS]
 
 
 # ----------------------------------------------------------------- pure payout math
@@ -56,7 +56,7 @@ def test_money_is_conserved(amounts):
 
 
 def test_odds_display():
-    pools = {1: 4000, 2: 6000, 3: 0, 4: 0, 5: 0, 6: 0}
+    pools = {1: 4000, 2: 6000, 3: 0, 4: 0, 5: 0}
     odds = main.current_odds(pools, 500)
     assert odds[1] == 2.38 and odds[2] == 1.58 and odds[3] is None
 
@@ -66,6 +66,7 @@ def test_odds_display():
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setattr(main, "DEV_MODE", True)
+    monkeypatch.setattr(main, "STARTING_BALANCE", 0)   # tests control balances via /deposit
     main.init_db()
     return TestClient(main.app)
 
@@ -136,7 +137,7 @@ def test_cannot_bet_after_lock(client):
 def test_bet_limits_and_seat_validation(client):
     u = make_user(client, "edge")
     rid = new_round(client)
-    assert place(client, u, rid, 7, 1000).status_code == 422
+    assert place(client, u, rid, main.NUM_PLAYERS + 1, 1000).status_code == 422
     assert place(client, u, rid, 1, 50).status_code == 422          # below MIN_BET
 
 

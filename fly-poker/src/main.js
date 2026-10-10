@@ -1,6 +1,7 @@
 import { loadEngine } from './ui/adapter.js';
 import { createView } from './ui/scene.js';
 import { markSelected, mountHud } from './ui/panels.js';
+import { initBetting } from './ui/betting.js';
 
 const boot = document.getElementById('boot');
 const canvas = document.getElementById('view');
@@ -14,6 +15,12 @@ function fail(error) {
 try {
   const engine = await loadEngine();
   const hud = mountHud();
+  const betting = initBetting({ playerNames: engine.FLIES.map((fly) => fly.name) });
+  const seatOf = (flyId) => engine.FLIES.findIndex((fly) => fly.id === flyId) + 1;   // backend seat = index + 1
+  const HOLD_MS = 2500;   // auto-play: how long the finished hand stays on screen before the "!" appears
+  let wasLive = false;
+  let betDeadline = 0;
+  betting.openWindow({ stillWanted: () => !wasLive });   // first betting window opens as soon as the room loads
   const view = createView(canvas, engine.FLIES);
   let table = engine.createTable({ seed: 1 });
   let selectedId = null;
@@ -26,6 +33,15 @@ try {
     view.setSelected(selectedId);
     markSelected(selectedId);
     hud.render(state);
+    if (wasLive && !state.handLive) {
+      const seats = (state.lastSettlement?.winners || []).map((w) => seatOf(w.id)).filter(Boolean);
+      // A fly won: settle the bets. Playing by hand, the betting UI slides back up for the next hand;
+      // in auto-play the loop below offers it with the "!" instead.
+      betting.settle([...new Set(seats)]).then(() => {
+        if (!wasLive && !auto) betting.openWindow({ stillWanted: () => !wasLive && !auto });
+      });
+    }
+    wasLive = state.handLive;
     if (!selectedId) return;
     try {
       hud.renderInspect(engine.getFlyInspection(table, selectedId), true);
@@ -37,16 +53,40 @@ try {
   function stopAuto() {
     auto = false;
     clearTimeout(timer);
+    betting.cancelOffer();
     hud.setAuto(false);
   }
 
-  function tick() {
+  async function tick() {
     if (!auto) return;
     try {
       const state = engine.getPublicState(table);
       if (state.handLive) engine.step(table);
-      else if (state.canDeal) engine.dealHand(table);
-      else {
+      else if (state.canDeal) {
+        if (betting.windowOpen) {
+          // A betting window is already running (the room's first one, say): let it finish, then deal.
+          await betting.waitWindow();
+          if (!auto) return;
+        } else if (!betting.readyToDeal) {
+          // Between hands: let the winner show, then pop up the "!" for 2 s.
+          if (!betDeadline) betDeadline = Date.now() + (betting.online ? HOLD_MS : 0);
+          if (Date.now() < betDeadline) { timer = setTimeout(tick, 250); return; }
+          betDeadline = 0;
+          const wantsToBet = betting.online && await betting.offer();
+          if (!auto) return;
+          if (wantsToBet) {
+            await betting.openWindow({ stillWanted: () => auto });   // 10 s, skippable
+            if (!auto) return;
+          } else {
+            await betting.ensureOpen();   // ignored: carry on, repeating the last bets
+            await betting.rebet();
+            if (!auto) return;
+            await betting.lock();
+            if (!auto) return;
+          }
+        }
+        engine.dealHand(table);
+      } else {
         stopAuto();
         refresh();
         return;
@@ -65,12 +105,13 @@ try {
     refresh();
   }
 
-  hud.onDeal(() => {
+  hud.onDeal(async () => {
     stopAuto();
     hud.setError('');
     try {
       const state = engine.getPublicState(table);
       if (!state.canDeal) return;
+      await betting.lock();   // no more bets once the cards are out
       engine.dealHand(table);
       refresh();
     } catch (error) {
@@ -105,6 +146,10 @@ try {
     stopAuto();
     hud.setError('');
     table = engine.createTable({ seed: 1 });
+    wasLive = false;
+    betDeadline = 0;
+    betting.forget();
+    betting.cancel().then(() => betting.openWindow({ stillWanted: () => !wasLive }));   // refund any open/locked round, then a fresh window
     selectedId = null;
     hud.renderInspect(null, false);
     refresh();

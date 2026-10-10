@@ -5,7 +5,9 @@
   --brass: #e6c27a;
   --wood: rgba(28, 16, 12, 0.88);
   --line: rgba(230, 194, 122, 0.28);
-  --felt: #1f8a4c;
+  --win: #8ddeaf;
+  --loss: #f0a0a0;
+  --brick: #d9674f;
 }
 
 * { box-sizing: border-box; }
@@ -106,6 +108,10 @@ body::after {
 }
 
 .status, .potline { min-width: 180px; }
+.betline { margin: 4px 0 0; color: var(--brass); font-size: 13px; font-variant-numeric: tabular-nums; }
+.betline:empty { display: none; }
+.betline[data-phase="offline"] { color: var(--brick); }
+.betline[data-phase="open"] { color: var(--win); }
 .potline { text-align: right; }
 .status { text-align: center; }
 
@@ -142,7 +148,7 @@ body::after {
   top: 92px;
   left: 16px;
   width: min(340px, 92vw);
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 290px);
   overflow: auto;
   padding: 12px 14px 16px;
   border-radius: 16px;
@@ -194,12 +200,18 @@ body::after {
   right: 12px;
   bottom: 12px;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 10px;
-  align-items: center;
-  justify-content: space-between;
   padding: 8px;
   border-radius: 16px;
+}
+
+.dock-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .controls { flex-wrap: wrap; }
@@ -228,16 +240,23 @@ button.ghost { background: transparent; }
 
 .speed input { width: 88px; accent-color: var(--brass); vertical-align: middle; }
 
-.stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.seat { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .plate {
   text-align: left;
-  min-width: 108px;
+  min-width: 0;
+  width: 100%;
   padding: 6px 10px 6px 12px;
   border-radius: 12px;
   border-left: 4px solid var(--fly, var(--brass));
   box-shadow: none;
 }
-.plate .who { display: block; font-weight: 700; }
+.plate .who { display: block; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plate .chips { font-variant-numeric: tabular-nums; color: var(--brass); }
 .plate.acting { outline: 1px solid var(--fly, var(--brass)); }
 .plate.picked { background: #4a2c1c; }
@@ -246,7 +265,7 @@ button.ghost { background: transparent; }
 .error {
   position: absolute;
   left: 50%;
-  bottom: 92px;
+  bottom: 252px;
   transform: translateX(-50%);
   margin: 0;
   padding: 8px 12px;
@@ -256,7 +275,7 @@ button.ghost { background: transparent; }
 
 .hint {
   position: absolute;
-  top: 78px;
+  top: 118px;
   left: 50%;
   transform: translateX(-50%);
   margin: 0;
@@ -266,8 +285,209 @@ button.ghost { background: transparent; }
 }
 
 @media (max-width: 800px) {
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .bet-bank-amt { font-size: 20px; }
+  .bet-chip { width: 38px; height: 38px; }
+  .bet-chip-face { inset: 4px; font-size: 10px; }
+  .inspect { max-height: calc(100vh - 400px); }
   .brand h1 { font-size: 18px; }
   .street, .pot { font-size: 20px; }
   .log { display: none; }
   .hint { display: none; }
+}
+
+/* ================= betting (merged into the dock) ================= */
+
+/* bankroll + chip picker, top-right of the dock */
+.bet-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.bet-bank { display: flex; align-items: baseline; gap: 8px; }
+.bet-bank-label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+.bet-bank-amt { font: 600 24px/1 Palatino, Georgia, serif; color: var(--brass); font-variant-numeric: tabular-nums; }
+.bet-bank-mine { color: var(--win); font-size: 12px; }
+.bet-bank-mine:empty { display: none; }
+
+.bet-chips { display: flex; gap: 8px; align-items: center; }
+.bet-chip {
+  --chip: #f6efe4; --edge: #9a8a70; --ink: #2a1a10;
+  position: relative; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%;
+  background: repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 30deg);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 6px 10px rgba(0, 0, 0, 0.35);
+}
+.bet-chip:hover { border: 0; }
+.bet-chip[data-tier="5"]   { --chip: #b8432f; --edge: #f6efe4; --ink: #f6efe4; }
+.bet-chip[data-tier="25"]  { --chip: #8a5a32; --edge: #f6efe4; --ink: #f6efe4; }
+.bet-chip[data-tier="100"] { --chip: #1c100c; --edge: #e6c27a; --ink: #e6c27a; }
+.bet-chip-face {
+  position: absolute; inset: 5px; display: grid; place-items: center;
+  font-weight: 700; font-size: 11px; color: var(--ink); font-variant-numeric: tabular-nums;
+  background: var(--chip); border: 2px dashed var(--edge); border-radius: 50%;
+}
+.bet-chip.is-on { transform: translateY(-5px); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 0 3px var(--brass), 0 10px 14px rgba(0, 0, 0, 0.4); }
+
+.bet-rebuy { background: #6a2030; border-color: #e07a88; }
+.bet-rebuy[hidden] { display: none; }
+
+/* bet card above each fly's name plate */
+.bet-slot {
+  position: relative;
+  display: grid; gap: 6px;
+  padding: 8px 10px 9px;
+  background: rgba(58, 36, 24, 0.55);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--fly, var(--brass));
+  border-radius: 12px;
+}
+.bet-slot:empty { display: none; }
+.bet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.bet-odds { font: 600 22px/1 Palatino, Georgia, serif; color: var(--brass); font-variant-numeric: tabular-nums; }
+.bet-pool { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bet-mine { color: var(--win); font-size: 12px; }
+.bet-mine:empty { display: none; }
+
+.bet-btn {
+  width: 100%;
+  padding: 7px 10px;
+  font-weight: 700;
+  color: #2a1a10;
+  background: linear-gradient(#f0d28f, var(--brass));
+  border: 0;
+  border-bottom: 3px solid #9a7a32;
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.bet-btn:hover:not(:disabled) { border-color: #9a7a32; filter: brightness(1.06); }
+.bet-btn:active:not(:disabled) { transform: translateY(2px); border-bottom-width: 1px; }
+.bet-btn:disabled {
+  color: var(--muted);
+  background: #3a2418;
+  border: 1px solid var(--line);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.bet-slot.has-mine { box-shadow: 0 0 0 1px var(--win) inset; }
+
+/* toast, result banner, dev tools */
+.bet-overlay { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+.bet-overlay [hidden] { display: none !important; }
+.bet-toast {
+  position: absolute; left: 50%; bottom: 252px; transform: translateX(-50%);
+  margin: 0; padding: 8px 18px; max-width: 90vw;
+  background: var(--wood); border: 1px solid var(--brass); border-radius: 99px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.bet-toast[data-kind="err"] { border-color: var(--brick); color: #ffd0d0; }
+.bet-toast[data-kind="ok"] { border-color: var(--win); }
+
+.bet-banner {
+  position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+  min-width: 300px; max-width: 90vw; padding: 22px 38px 24px; text-align: center; cursor: pointer;
+  background: radial-gradient(ellipse at 50% 0, #4a2c1c, #1c100c 78%);
+  border: 2px solid var(--brass); border-radius: 14px;
+  box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.35), 0 20px 60px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+.bet-banner-title { margin: 0; font: 600 22px/1.1 Palatino, Georgia, serif; }
+.bet-banner-big { margin: 6px 0 4px; font: 600 64px/1 Palatino, Georgia, serif; font-variant-numeric: tabular-nums; }
+.bet-banner-sub { margin: 0; color: var(--muted); }
+.bet-banner[data-kind="win"] .bet-banner-big { color: var(--brass); text-shadow: 0 0 28px rgba(230, 194, 122, 0.55); }
+.bet-banner[data-kind="loss"] { border-color: var(--brick); }
+.bet-banner[data-kind="loss"] .bet-banner-big { color: var(--loss); }
+.bet-banner[data-kind="refund"] { border-color: var(--ink); }
+
+.bet-dev {
+  position: absolute; bottom: 252px; left: 16px; width: 190px; padding: 8px 10px;
+  background: var(--wood); border: 1px dashed var(--line); border-radius: 8px;
+  pointer-events: auto;
+}
+.bet-dev summary { cursor: pointer; color: var(--muted); }
+.bet-dev > * { margin-top: 6px; }
+.bet-dev-field, .bet-dev-btn {
+  display: block; width: 100%; padding: 6px 8px; text-align: left; font: inherit; color: var(--ink);
+  background: #3a2418; border: 1px solid var(--line); border-radius: 4px;
+}
+.bet-dev-btn { cursor: pointer; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .bet-chip, .bet-btn { transition: transform 0.14s ease-out, box-shadow 0.14s, filter 0.14s; }
+  .bet-banner { animation: bet-pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1); }
+  @keyframes bet-pop { from { transform: translate(-50%, -50%) scale(0.6); opacity: 0; } }
+}
+
+
+/* ================= betting window: slide in, count down, slide away ================= */
+/* <html data-bet="hidden|open|prompt"> is set by betting.js */
+
+.bet-bar { position: relative; }
+.bet-panel { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+/* the bet cards sink behind the name plates; the dock closes up underneath them */
+.seat .plate { position: relative; z-index: 1; }
+.bet-slot { z-index: 0; max-height: 180px; overflow: hidden; }
+html[data-bet="hidden"] .bet-slot,
+html[data-bet="prompt"] .bet-slot {
+  max-height: 0;
+  margin-bottom: -4px;            /* cancel the gap above the plate */
+  padding-top: 0; padding-bottom: 0;
+  border-width: 0;
+  opacity: 0;
+  transform: translateY(70px);
+  pointer-events: none;
+}
+html[data-bet="hidden"] .bet-panel,
+html[data-bet="prompt"] .bet-panel {
+  visibility: hidden; opacity: 0; transform: translateY(46px); pointer-events: none;
+}
+
+/* countdown + skip */
+.bet-timer {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 6px 4px 14px;
+  background: rgba(58, 36, 24, 0.55);
+  border: 1px solid var(--line); border-radius: 999px;
+}
+.bet-timer-label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.bet-timer-num { min-width: 2.4ch; font: 600 22px/1 Palatino, Georgia, serif; color: var(--brass); font-variant-numeric: tabular-nums; }
+.bet-timer-bar { width: 84px; height: 6px; border-radius: 99px; background: rgba(0, 0, 0, 0.4); overflow: hidden; }
+.bet-timer-bar i { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, var(--brass), #f0d28f); transform-origin: left center; }
+html[data-bet="open"] .bet-timer-bar i { animation: bet-drain var(--ms, 10s) linear forwards; }
+@keyframes bet-drain { to { transform: scaleX(0); } }
+.bet-timer[data-low="true"] .bet-timer-num { color: var(--brick); }
+.bet-timer[data-low="true"] .bet-timer-bar i { background: var(--brick); }
+.bet-skip { padding: 6px 16px; font-weight: 700; color: var(--brass); background: #3a2418; border-color: var(--brass); }
+.bet-skip:hover { background: #4a2c1c; }
+
+/* the "!" that offers a new bet during auto-play */
+.bet-alert {
+  position: absolute; right: 4px; top: 50%; translate: 0 -50%;
+  display: grid; place-items: center;
+  width: 46px; height: 46px; padding: 0; border: 0; border-radius: 50%;
+  background: linear-gradient(#f0d28f, var(--brass));
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.bet-alert[hidden] { display: none; }
+.bet-alert:hover { border: 0; filter: brightness(1.08); }
+.bet-alert-mark { font: 800 30px/1 Palatino, Georgia, serif; color: #2a1a10; }
+.bet-alert svg { position: absolute; inset: -5px; width: calc(100% + 10px); height: calc(100% + 10px); transform: rotate(-90deg); pointer-events: none; }
+.bet-alert circle { fill: none; stroke: var(--brass); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 157.1; animation: bet-ring var(--ms, 2s) linear forwards; }
+@keyframes bet-ring { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 157.1; } }   /* the ring empties as the 2 s run out */
+
+@media (prefers-reduced-motion: no-preference) {
+  .bet-slot {
+    transition: max-height 0.6s cubic-bezier(0.22, 1, 0.36, 1), margin 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+      padding 0.6s cubic-bezier(0.22, 1, 0.36, 1), border-width 0.6s, opacity 0.4s ease,
+      transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.14s;
+  }
+  .bet-panel { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease, visibility 0s linear 0s; }
+  html[data-bet="hidden"] .bet-panel,
+  html[data-bet="prompt"] .bet-panel { transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease, visibility 0s linear 0.6s; }
+  .bet-alert { animation: bet-alert-in 0.4s cubic-bezier(0.2, 1.5, 0.4, 1), bet-alert-pulse 0.9s 0.4s ease-in-out infinite; }
+  @keyframes bet-alert-in { from { scale: 0.2; opacity: 0; } }
+  @keyframes bet-alert-pulse { 50% { scale: 1.12; } }
+}
+
+@media (max-width: 800px) {
+  .bet-timer-label { display: none; }
+  .bet-timer-bar { width: 52px; }
 }
