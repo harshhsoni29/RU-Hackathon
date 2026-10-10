@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 // Fly Poker betting, merged into the main HUD.
 //
 // There is no separate betting screen any more. panels.js builds one column per fly in the
@@ -31,6 +32,9 @@ const MIN_BET = 100;
 const MAX_BET = 1_000_000;
 =======
 // Betting slip for Fly Poker.
+=======
+// Betting slip for Full House-flies.
+>>>>>>> 7135fa6792274bf1eadd7ae5187390333eebaf78
 // Plain DOM, no dependencies, so it sits on top of the Three.js canvas without touching it.
 //
 //   import { initBetting } from './ui/betting.js';
