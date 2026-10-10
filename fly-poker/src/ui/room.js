@@ -1,7 +1,8 @@
 /** Enclosed poker den: carpet, velvet, wood, bar, lounge, cage, neon. */
 
 import * as THREE from 'three';
-import { ROOM, TABLE } from './layout.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { bindThree } from './textures.js';
 import {
   artTexture,
   carpetTexture,
@@ -10,6 +11,39 @@ import {
   velvetTexture,
   woodTexture,
 } from './textures.js';
+
+/** Wide oval. The spectator stands on the near rail (+Z) and looks across. */
+export const ROOM = { halfW: 5.5, halfD: 4.55, height: 3.3 };
+
+export const TABLE = {
+  x: 0,
+  z: 0,
+  top: 0.78,
+  feltRx: 1.92,
+  feltRz: 0.96,
+  apronRx: 2.12,
+  apronRz: 1.1,
+};
+
+export const SEAT = { rx: 3.15, rz: 2.2 };
+
+/** Dealer takes the left end. Flies leave a gap at +Z for the rail camera. */
+export const DEALER_ANGLE = Math.PI;
+export const SEATS = [
+  { id: 'vera', angle: (240 * Math.PI) / 180 },
+  { id: 'buzz', angle: (300 * Math.PI) / 180 },
+  { id: 'nib', angle: 0 },
+  { id: 'callie', angle: (60 * Math.PI) / 180 },
+  { id: 'mani', angle: (120 * Math.PI) / 180 },
+];
+
+export function ovalPoint(angle, rx, rz, origin = TABLE) {
+  return {
+    x: origin.x + Math.cos(angle) * rx,
+    y: 0,
+    z: origin.z + Math.sin(angle) * rz,
+  };
+}
 
 function shade(mesh, cast = true) {
   mesh.castShadow = cast;
@@ -226,7 +260,7 @@ function addCage(parent, mats) {
 
 function addNeon(parent, mats) {
   const z = -ROOM.halfD + 0.1;
-  const board = box(2.15, 0.58, 0.06, mats.woodDark, 1.15, 2.22, z);
+  const board = box(2.05, 0.48, 0.06, mats.woodDark, -1.55, 2.58, z);
   parent.add(board);
   const letters = new THREE.Group();
   const cell = 0.34;
@@ -235,12 +269,12 @@ function addNeon(parent, mats) {
     const x = (i - (glyphs.length - 1) / 2) * cell;
     addGlyph(letters, mats.neon, glyph, x);
   });
-  letters.position.set(1.15, 2.22, z + 0.07);
-  letters.scale.setScalar(0.72);
+  letters.position.set(-1.55, 2.58, z + 0.07);
+  letters.scale.setScalar(0.62);
   parent.add(letters);
 
   const light = new THREE.PointLight(0xff3355, 6, 5.5, 2);
-  light.position.set(1.15, 2.1, z + 0.7);
+  light.position.set(-1.55, 2.4, z + 0.7);
   parent.add(light);
 }
 
@@ -362,7 +396,91 @@ export function buildRoom(scene, mats) {
   const lamp = addHeroLamp(root, mats);
   addSconce(root, mats, -ROOM.halfW + 0.08, 2.0, -1.2, Math.PI / 2);
   addSconce(root, mats, ROOM.halfW - 0.08, 2.0, 1.4, -Math.PI / 2);
+  addTable(root, mats);
   return lamp;
+}
+
+function addTable(parent, mats) {
+  const foot = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 0.08, 14), mats.woodDark));
+  foot.position.set(TABLE.x, 0.04, TABLE.z);
+  const post = shade(new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.5, 10), mats.woodDark));
+  post.position.set(TABLE.x, 0.3, TABLE.z);
+  const apron = shade(new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.18, 40), mats.wood));
+  apron.scale.set(TABLE.apronRx, 1, TABLE.apronRz);
+  apron.position.set(TABLE.x, TABLE.top - 0.14, TABLE.z);
+  const felt = shade(new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.05, 48), mats.felt), false);
+  felt.scale.set(TABLE.feltRx, 1, TABLE.feltRz);
+  felt.position.set(TABLE.x, TABLE.top, TABLE.z);
+  const rail = shade(new THREE.Mesh(new THREE.TorusGeometry(1, 0.07, 8, 40), mats.leather));
+  rail.rotation.x = Math.PI / 2;
+  rail.scale.set(TABLE.feltRx + 0.1, TABLE.feltRz + 0.08, 1);
+  rail.position.set(TABLE.x, TABLE.top + 0.02, TABLE.z);
+  const rug = shade(new THREE.Mesh(new THREE.CircleGeometry(1, 40), mats.rug), false);
+  rug.rotation.x = -Math.PI / 2;
+  rug.scale.set(3.6, 2.55, 1);
+  rug.position.set(TABLE.x, 0.012, TABLE.z);
+  const curve = new THREE.EllipseCurve(0, 0, TABLE.feltRx * 0.82, TABLE.feltRz * 0.72, 0, Math.PI * 2, false, 0);
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(curve.getPoints(72).map((p) => new THREE.Vector3(TABLE.x + p.x, TABLE.top + 0.035, TABLE.z + p.y))),
+    new THREE.LineBasicMaterial({ color: 0xe6d2a2, transparent: true, opacity: 0.4 }),
+  );
+  parent.add(foot, post, apron, felt, rail, rug, line);
+}
+
+/** Deck sits on the felt at the dealer's end. Board and pot stay on the felt. */
+export function tableAnchors() {
+  const deck = ovalPoint(DEALER_ANGLE, TABLE.feltRx * 0.62, TABLE.feltRz * 0.55);
+  deck.y = TABLE.top + 0.02;
+  return {
+    deck,
+    board: { x: TABLE.x, y: TABLE.top + 0.02, z: TABLE.z + 0.02 },
+    pot: { x: TABLE.x, y: TABLE.top + 0.02, z: TABLE.z + 0.42 },
+  };
+}
+
+export function createRailView(canvas) {
+  bindThree(THREE);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setClearColor(0x120c09);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x140e0b, 8, 16);
+  scene.add(new THREE.AmbientLight(0xffe2c4, 0.32));
+  scene.add(new THREE.HemisphereLight(0xffc9a0, 0x2a120e, 0.4));
+  const fill = new THREE.DirectionalLight(0xffd8b0, 0.65);
+  fill.position.set(0.4, 2.8, 4.2);
+  scene.add(fill);
+
+  const mats = createMaterials();
+  const lamp = buildRoom(scene, mats);
+  const camera = new THREE.PerspectiveCamera(64, 1, 0.08, 40);
+  camera.position.set(0, 1.88, TABLE.z + 4.05);
+  const controls = new OrbitControls(camera, canvas);
+  controls.target.set(TABLE.x, 0.86, TABLE.z - 0.05);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 2.4;
+  controls.maxDistance = 7.2;
+  controls.minPolarAngle = 0.45;
+  controls.maxPolarAngle = 1.28;
+  controls.update();
+
+  function resize() {
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    if (w < 2 || h < 2) return;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+
+  return { renderer, scene, camera, controls, mats, lamp, anchors: tableAnchors(), resize };
 }
 
 export function chipMaterials(mats) {

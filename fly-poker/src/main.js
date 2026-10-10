@@ -1,6 +1,17 @@
-import { loadEngine } from './ui/adapter.js';
-import { createView } from './ui/scene.js';
-import { markSelected, mountHud } from './ui/panels.js';
+import * as THREE from 'three';
+import {
+  FLIES,
+  createTable,
+  dealHand,
+  getFlyInspection,
+  getPublicState,
+  step,
+} from './contract.js';
+import { placeCast, setFlyEmote } from './ui/flies.js';
+import { mountHud } from './ui/hud.js';
+import { mountRail } from './ui/rail.js';
+import { TABLE, createRailView } from './ui/room.js';
+import { mountTitle } from './ui/title.js';
 
 const boot = document.getElementById('boot');
 const canvas = document.getElementById('view');
@@ -11,26 +22,123 @@ function fail(error) {
   boot.textContent = error?.message || String(error);
 }
 
+async function loadOptional(path) {
+  try {
+    return await import(path);
+  } catch (error) {
+    console.warn(`Optional module ${path} is not available.`, error);
+    return null;
+  }
+}
+
+function isPromise(value) {
+  return Boolean(value && typeof value.then === 'function');
+}
+
 try {
-  const engine = await loadEngine();
+  const [dealMod, chipMod, brainMod] = await Promise.all([
+    loadOptional('./ui/deal.js'),
+    loadOptional('./ui/chips.js'),
+    loadOptional('./ui/brain.js'),
+  ]);
+
+  const view = createRailView(canvas);
+  const cast = placeCast(view.scene, FLIES);
+  const brainRoot = document.createElement('div');
+  brainRoot.id = 'brain';
+  document.body.appendChild(brainRoot);
+
+  let dealLayer = null;
+  let chipLayer = null;
+  let brain = null;
+  const layerDeps = {
+    THREE,
+    camera: view.camera,
+    scene: view.scene,
+    table: TABLE,
+    seats: cast.seats.map((seat) => ({
+      id: seat.id,
+      name: seat.name,
+      color: seat.color,
+      angle: seat.angle,
+      position: seat.position,
+      // Hole-card faces point along outward, toward that fly. Backs point inward.
+      outward: seat.outward,
+      cardAnchor: seat.cardAnchor,
+    })),
+    dealer: {
+      position: {
+        x: cast.dealer.pivot.position.x,
+        y: cast.dealer.pivot.position.y,
+        z: cast.dealer.pivot.position.z,
+      },
+    },
+    deck: view.anchors.deck,
+    boardAnchor: view.anchors.board,
+    potAnchor: view.anchors.pot,
+  };
+  if (dealMod?.createDealLayer) {
+    try {
+      dealLayer = dealMod.createDealLayer(view.scene, layerDeps);
+    } catch (error) {
+      console.warn('createDealLayer failed', error);
+    }
+  }
+  if (chipMod?.createChipLayer) {
+    try {
+      chipLayer = chipMod.createChipLayer(view.scene, layerDeps);
+    } catch (error) {
+      console.warn('createChipLayer failed', error);
+    }
+  }
+  if (brainMod?.createBrainPanel) {
+    try {
+      brain = brainMod.createBrainPanel(brainRoot);
+    } catch (error) {
+      console.warn('createBrainPanel failed', error);
+    }
+  }
+
   const hud = mountHud();
-  const view = createView(canvas, engine.FLIES);
-  let table = engine.createTable({ seed: 1 });
-  let selectedId = null;
+  const rail = mountRail();
+  const title = mountTitle(() => {
+    entered = true;
+    hud.show();
+  });
+
+  let table = createTable({ seed: 1 });
+  let entered = false;
   let auto = false;
+  let busy = false;
   let timer = 0;
+  let selectedId = null;
+  const winners = new Set();
 
   function refresh() {
-    const state = engine.getPublicState(table);
-    view.setState(state);
-    view.setSelected(selectedId);
-    markSelected(selectedId);
-    hud.render(state);
-    if (!selectedId) return;
+    const state = getPublicState(table);
+    cast.updateTags(state, winners);
+    hud.render(state, { busy, selectedId });
+    rail.render(state);
+    return state;
+  }
+
+  async function runDealAnimation(state) {
+    if (!dealMod?.playDealAnimation || !dealLayer) return;
     try {
-      hud.renderInspect(engine.getFlyInspection(table, selectedId), true);
+      const pending = dealMod.playDealAnimation(dealLayer, state);
+      if (isPromise(pending)) await pending;
     } catch (error) {
-      hud.renderInspect(null, true, error.message);
+      console.warn('playDealAnimation failed', error);
+    }
+  }
+
+  async function runChipAnimation(action) {
+    if (!chipMod?.playChipAnimation || !chipLayer || !action) return;
+    try {
+      const pending = chipMod.playChipAnimation(chipLayer, action);
+      if (isPromise(pending)) await pending;
+    } catch (error) {
+      console.warn('playChipAnimation failed', error);
     }
   }
 
@@ -40,57 +148,114 @@ try {
     hud.setAuto(false);
   }
 
-  function tick() {
-    if (!auto) return;
+  function rememberWinners(action) {
+    if (!action?.handEnded) return;
+    winners.clear();
+    for (const winner of action.winners || []) winners.add(winner.id);
+  }
+
+  async function playDeal() {
+    winners.clear();
+    dealHand(table);
+    const state = refresh();
+    await runDealAnimation(state);
+  }
+
+  async function playStep() {
+    const action = step(table);
+    rememberWinners(action);
+    const state = refresh();
+    const kind = action?.action;
+    if (action?.flyId && (kind === 'fold' || kind === 'check' || kind === 'call' || kind === 'bet' || kind === 'raise')) {
+      setFlyEmote(action.flyId, kind);
+    }
+    for (const winner of action?.winners || []) {
+      if (winner?.id) setFlyEmote(winner.id, 'win');
+    }
+    for (const seat of state.seats) {
+      if (seat.stack === 0) setFlyEmote(seat.id, 'bust');
+    }
+    await runChipAnimation(action);
+    return action;
+  }
+
+  async function tick() {
+    if (!auto || !entered) return;
+    if (busy) {
+      timer = setTimeout(tick, 40);
+      return;
+    }
+    busy = true;
+    hud.render(getPublicState(table), { busy, selectedId });
     try {
-      const state = engine.getPublicState(table);
-      if (state.handLive) engine.step(table);
-      else if (state.canDeal) engine.dealHand(table);
+      const state = getPublicState(table);
+      if (state.handLive) await playStep();
+      else if (state.canDeal) await playDeal();
       else {
         stopAuto();
         refresh();
         return;
       }
-      refresh();
     } catch (error) {
       stopAuto();
       hud.setError(error.message);
+      refresh();
       return;
+    } finally {
+      busy = false;
     }
-    timer = setTimeout(tick, hud.delayMs());
+    refresh();
+    if (auto) timer = setTimeout(tick, hud.delayMs());
   }
 
-  function select(id) {
+  function openBrain(id) {
+    if (!entered || !id) return;
     selectedId = id;
     refresh();
-  }
-
-  hud.onDeal(() => {
-    stopAuto();
-    hud.setError('');
+    if (!brain || !brainMod?.showBrain) return;
     try {
-      const state = engine.getPublicState(table);
-      if (!state.canDeal) return;
-      engine.dealHand(table);
-      refresh();
+      brainMod.showBrain(brain, getFlyInspection(table, id));
     } catch (error) {
       hud.setError(error.message);
+    }
+  }
+
+  hud.onDeal(async () => {
+    if (!entered || busy) return;
+    stopAuto();
+    hud.setError('');
+    if (!getPublicState(table).canDeal) return;
+    busy = true;
+    refresh();
+    try {
+      await playDeal();
+    } catch (error) {
+      hud.setError(error.message);
+    } finally {
+      busy = false;
+      refresh();
     }
   });
 
-  hud.onNext(() => {
+  hud.onNext(async () => {
+    if (!entered || busy) return;
     stopAuto();
     hud.setError('');
+    if (!getPublicState(table).handLive) return;
+    busy = true;
+    refresh();
     try {
-      if (!engine.getPublicState(table).handLive) return;
-      engine.step(table);
-      refresh();
+      await playStep();
     } catch (error) {
       hud.setError(error.message);
+    } finally {
+      busy = false;
+      refresh();
     }
   });
 
   hud.onAuto(() => {
+    if (!entered) return;
     if (auto) {
       stopAuto();
       return;
@@ -102,45 +267,76 @@ try {
   });
 
   hud.onReset(() => {
+    if (!entered || busy) return;
     stopAuto();
     hud.setError('');
-    table = engine.createTable({ seed: 1 });
+    table = createTable({ seed: 1 });
+    winners.clear();
     selectedId = null;
-    hud.renderInspect(null, false);
+    if (brain && brainMod?.hideBrain) brainMod.hideBrain(brain);
     refresh();
   });
 
-  hud.onSelect(select);
-  hud.onCloseInspect(() => {
+  hud.onSelect(openBrain);
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !brain || !brainMod?.hideBrain) return;
+    brainMod.hideBrain(brain);
     selectedId = null;
-    view.setSelected(null);
-    markSelected(null);
-    hud.render(engine.getPublicState(table));
+    refresh();
   });
 
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
   let pointer = null;
+
+  function pickFly(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(ndc, view.camera);
+    const hits = raycaster.intersectObjects(cast.pickables(), true);
+    for (const hit of hits) {
+      let node = hit.object;
+      while (node) {
+        if (node.userData?.flyId) return node.userData.flyId;
+        node = node.parent;
+      }
+    }
+    return null;
+  }
+
   canvas.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || title.isOpen()) return;
     pointer = { x: event.clientX, y: event.clientY };
   });
   canvas.addEventListener('pointerup', (event) => {
-    if (!pointer || event.button !== 0) return;
+    if (!pointer || event.button !== 0 || title.isOpen()) return;
     const dx = event.clientX - pointer.x;
     const dy = event.clientY - pointer.y;
     pointer = null;
     if (dx * dx + dy * dy > 36) return;
-    const id = view.pick(event.clientX, event.clientY);
-    if (id) select(id);
+    const id = pickFly(event.clientX, event.clientY);
+    if (id) openBrain(id);
   });
   canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-  window.addEventListener('resize', () => view.resize());
 
-  view.start();
-  refresh();
-  boot.remove();
-  if (engine.source !== 'contract') {
-    hud.setError('contract.js did not load. This is a preview room, not a live hand.');
+  window.addEventListener('resize', () => {
+    view.resize();
+    cast.faceTable();
+  });
+
+  function frame(time) {
+    requestAnimationFrame(frame);
+    view.controls.update();
+    cast.tick(time);
+    view.renderer.render(view.scene, view.camera);
   }
+
+  view.resize();
+  refresh();
+  requestAnimationFrame(frame);
+  boot.remove();
 } catch (error) {
   fail(error);
 }
