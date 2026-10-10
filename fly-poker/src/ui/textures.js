@@ -133,6 +133,46 @@ export function wingTexture() {
 
 const SUIT_GLYPH = { s: '♠', h: '♥', d: '♦', c: '♣' };
 
+<<<<<<< HEAD
+=======
+/** Pip spots, top to bottom. A 1 means that pip is drawn upside down. */
+const PIPS = {
+  A: [[128, 196, 0]],
+  2: [[128, 156, 0], [128, 250, 1]],
+  3: [[128, 148, 0], [128, 204, 0], [128, 260, 1]],
+  4: [[90, 156, 0], [166, 156, 0], [90, 250, 1], [166, 250, 1]],
+  5: [[90, 150, 0], [166, 150, 0], [128, 204, 0], [90, 258, 1], [166, 258, 1]],
+  6: [[90, 146, 0], [166, 146, 0], [90, 204, 0], [166, 204, 0], [90, 262, 1], [166, 262, 1]],
+  7: [[90, 142, 0], [166, 142, 0], [128, 174, 0], [90, 206, 0], [166, 206, 0], [90, 264, 1], [166, 264, 1]],
+  8: [[90, 140, 0], [166, 140, 0], [128, 170, 0], [90, 200, 0], [166, 200, 0], [128, 232, 1], [90, 266, 1], [166, 266, 1]],
+  9: [[90, 136, 0], [166, 136, 0], [90, 170, 0], [166, 170, 0], [128, 204, 0], [90, 236, 1], [166, 236, 1], [90, 270, 1], [166, 270, 1]],
+  T: [[90, 132, 0], [166, 132, 0], [128, 156, 0], [90, 180, 0], [166, 180, 0], [90, 224, 1], [166, 224, 1], [128, 248, 1], [90, 272, 1], [166, 272, 1]],
+};
+
+function drawPip(g, glyph, x, y, size, flip) {
+  g.save();
+  g.translate(x, y);
+  if (flip) g.rotate(Math.PI);
+  g.font = `${size}px Georgia, serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(glyph, 0, size * 0.06);
+  g.restore();
+}
+
+function drawCourt(g, rank, glyph) {
+  g.save();
+  g.font = '700 132px Georgia, serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(rank, 128, 198);
+  g.font = '54px Georgia, serif';
+  g.fillText(glyph, 128, 132);
+  g.fillText(glyph, 128, 268);
+  g.restore();
+}
+
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
 export function cardTexture(rank, suit) {
   const c = canvas(256, 360);
   const g = c.getContext('2d');
@@ -153,11 +193,23 @@ export function cardTexture(rank, suit) {
   g.fillText(label, 24, 22);
   g.font = '48px Georgia, serif';
   g.fillText(glyph, 28, 78);
+<<<<<<< HEAD
   g.font = '120px Georgia, serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(glyph, 128, 200);
   g.save();
+=======
+  if (rank === 'J' || rank === 'Q' || rank === 'K') {
+    drawCourt(g, rank, glyph);
+  } else {
+    const spots = PIPS[rank] || PIPS.A;
+    const size = rank === 'A' ? 108 : spots.length > 6 ? 34 : 42;
+    for (const [x, y, flip] of spots) drawPip(g, glyph, x, y, size, flip);
+  }
+  g.save();
+  g.fillStyle = ink;
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
   g.translate(220, 320);
   g.rotate(Math.PI);
   g.font = '700 54px Georgia, serif';

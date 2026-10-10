@@ -163,7 +163,11 @@ export function learnFromHand(fly, info) {
     deltas,
   };
   fly.learningLog.unshift(record);
+<<<<<<< HEAD
   if (fly.learningLog.length > 8) fly.learningLog.length = 8;
+=======
+  if (fly.learningLog.length > 64) fly.learningLog.length = 64;
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
   return record;
 }
 

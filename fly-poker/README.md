@@ -11,6 +11,7 @@ python3 -m http.server 5173
 Open http://127.0.0.1:5173/
 
 Three.js loads from a CDN, so the first load needs a network connection. Drag to look around the room, scroll to zoom, right-drag to pan, and click a fly.
+<<<<<<< HEAD
 
 ## Betting (merged into the main HUD)
 
@@ -26,3 +27,5 @@ python simulate_engine.py             # optional: fake engine that opens/locks/s
 ```
 
 Open http://127.0.0.1:5173/?dev=1 for test controls (new round, lock, settle). If the backend is offline the poker room still works and the bet buttons read "Offline".
+=======
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12

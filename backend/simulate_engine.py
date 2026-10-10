@@ -36,7 +36,11 @@ def main():
     ap.add_argument("--split-chance", type=float, default=0.1, help="chance of a 2-way tie")
     args = ap.parse_args()
 
+<<<<<<< HEAD
     names = ["Vera", "Buzz", "Nib", "Callie", "Mani"]   # same order as fly-poker FLIES (seat = index + 1)
+=======
+    names = [f"Fly {i}" for i in range(1, 7)]
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
     n = 0
     while args.rounds == 0 or n < args.rounds:
         n += 1
@@ -50,7 +54,11 @@ def main():
         time.sleep(args.play_seconds)
 
         k = 2 if random.random() < args.split_chance else 1
+<<<<<<< HEAD
         winners = sorted(random.sample(range(1, len(names) + 1), k))
+=======
+        winners = sorted(random.sample(range(1, 7), k))
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
         res = post(f"/rounds/{rid}/settle", {"winner_seats": winners})
         print(f"[round {rid}] winners {winners}: {res['outcome']}, house took {res['house_take']} cents")
         time.sleep(4)

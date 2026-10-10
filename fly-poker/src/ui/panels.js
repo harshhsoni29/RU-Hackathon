@@ -69,7 +69,10 @@ export function mountHud() {
         <div class="status">
           <p class="street" data-street>Waiting</p>
           <p class="sub" data-sub>Click a fly · drag to look around</p>
+<<<<<<< HEAD
           <p class="betline" data-betline></p>
+=======
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
         </div>
         <div class="potline">
           <p class="pot" data-pot>Pot 0</p>
@@ -79,6 +82,7 @@ export function mountHud() {
       <aside class="log" data-log></aside>
       <aside class="inspect" data-inspect hidden></aside>
       <footer class="dock">
+<<<<<<< HEAD
         <div class="dock-top">
           <div class="controls">
             <button type="button" data-deal>Deal</button>
@@ -88,6 +92,14 @@ export function mountHud() {
             <button type="button" data-reset class="ghost">Reset</button>
           </div>
           <div class="bet-bar" data-bet-bar></div>
+=======
+        <div class="controls">
+          <button type="button" data-deal>Deal</button>
+          <button type="button" data-next>Next action</button>
+          <button type="button" data-auto>Auto-play</button>
+          <label class="speed">Speed <input type="range" min="1" max="8" value="4" data-speed /> <span data-speed-label>0.6s</span></label>
+          <button type="button" data-reset class="ghost">Reset</button>
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
         </div>
         <div class="stats" data-stats></div>
       </footer>
@@ -171,6 +183,7 @@ export function mountHud() {
 }
 
 function renderStats(host, state) {
+<<<<<<< HEAD
   const seats = state.seats || [];
   const selected = host.dataset.selected || '';
 
@@ -207,6 +220,26 @@ function renderStats(host, state) {
     plate.querySelector('.chips').textContent = seat.stack;
     plate.querySelector('.meta').textContent = `${wins}/${hands} · ${STYLE[seat.style] || seat.style}`;
   });
+=======
+  const selected = host.dataset.selected || '';
+  host.innerHTML = (state.seats || []).map((seat) => {
+    const wins = seat.stats?.handsWon ?? 0;
+    const hands = seat.stats?.handsPlayed ?? 0;
+    const accent = `#${(seat.color >>> 0).toString(16).padStart(6, '0')}`;
+    const classes = [
+      'plate',
+      seat.isActor ? 'acting' : '',
+      seat.id === selected ? 'picked' : '',
+      seat.folded ? 'folded' : '',
+    ].filter(Boolean).join(' ');
+    return `
+      <button type="button" class="${classes}" data-fly="${esc(seat.id)}" style="--fly:${accent}">
+        <span class="who">${esc(seat.name)}</span>
+        <span class="chips">${seat.stack}</span>
+        <span class="meta">${wins}/${hands} · ${esc(STYLE[seat.style] || seat.style)}</span>
+      </button>`;
+  }).join('');
+>>>>>>> c7af6a3e8a555daa767f327cea922bd20eb90d12
 }
 
 export function markSelected(id) {

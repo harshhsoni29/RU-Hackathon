@@ -1,0 +1,154 @@
+/* Betting slip: felt-green board, bone paper text, brass for money.
+   Parked off the right edge until the arrow tab slides it in. */
+.fp-slip {
+  --felt: #12352b;
+  --felt-2: #1a4838;
+  --bone: #efe6d2;
+  --brass: #d3a94a;
+  --brick: #d9674f;
+  --moss: #8fcf9a;
+  --fp-slip-gap: 16px;
+  position: fixed;
+  top: 16px;
+  right: var(--fp-slip-gap);
+  z-index: 20;
+  width: min(320px, calc(100vw - var(--fp-slip-gap) - 44px));
+  color: var(--bone);
+  font: 14px/1.4 "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  transform: translateX(calc(100% + var(--fp-slip-gap)));
+}
+.fp-slip.is-open { transform: translateX(0); }
+
+.fp-slip-tab {
+  position: absolute;
+  top: 14px;
+  right: calc(100% - 1px);
+  z-index: 1;
+  width: 32px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--brass);
+  background: color-mix(in srgb, var(--felt) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  backdrop-filter: blur(6px);
+}
+.fp-slip-arrow {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(-135deg);
+}
+.fp-slip.is-open .fp-slip-arrow { transform: rotate(45deg); }
+
+.fp-slip-panel {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 14px;
+  background: color-mix(in srgb, var(--felt) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent);
+  border-radius: 6px;
+  backdrop-filter: blur(6px);
+}
+.fp-slip *, .fp-slip *::before, .fp-slip *::after { box-sizing: border-box; }
+.fp-slip button, .fp-slip input, .fp-slip select { font: inherit; color: inherit; }
+.fp-slip .fp-slip-tab { color: var(--brass); }
+
+.fp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fp-title { margin: 0; font: 400 20px/1.1 "Young Serif", Georgia, serif; }
+.fp-status { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--felt-2); }
+.fp-status[data-state="open"] { background: var(--moss); color: var(--felt); }
+.fp-status[data-state="locked"] { background: var(--brass); color: var(--felt); }
+.fp-status[data-state="offline"] { background: var(--brick); color: var(--felt); }
+
+.fp-wallet { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 12px; }
+.fp-balance { color: var(--brass); font-variant-numeric: tabular-nums; font-size: 18px; }
+.fp-timer { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .8; }
+
+.fp-seats { display: grid; gap: 6px; }
+.fp-seat {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "name pool odds" "mine mine mine";
+  align-items: baseline;
+  column-gap: 12px;
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--felt-2);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.fp-seat-name { grid-area: name; font-weight: 600; }
+.fp-seat-pool { grid-area: pool; font-variant-numeric: tabular-nums; opacity: .75; }
+.fp-seat-odds { grid-area: odds; min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--brass); }
+.fp-seat-mine { grid-area: mine; font-size: 12px; color: var(--moss); }
+.fp-seat-mine:empty { display: none; }
+.fp-seat:hover:not(:disabled) { border-color: color-mix(in srgb, var(--brass) 60%, transparent); }
+.fp-seat.is-selected { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 18%, var(--felt-2)); }
+.fp-seat.is-winner { border-color: var(--moss); background: color-mix(in srgb, var(--moss) 22%, var(--felt-2)); }
+.fp-seat:disabled { cursor: default; }
+.fp-seat:disabled:not(.is-winner):not(.is-selected) { opacity: .65; }
+
+.fp-stakes { display: flex; gap: 6px; margin: 12px 0 8px; }
+.fp-chip {
+  flex: 1; padding: 6px 0; cursor: pointer;
+  background: transparent; border: 1px solid color-mix(in srgb, var(--bone) 35%, transparent); border-radius: 99px;
+}
+.fp-chip.is-on { background: var(--bone); color: var(--felt); border-color: var(--bone); }
+.fp-amount {
+  width: 64px; padding: 6px; text-align: right;
+  background: transparent; border: 1px solid color-mix(in srgb, var(--bone) 35%, transparent); border-radius: 4px;
+}
+
+.fp-bet {
+  width: 100%; padding: 10px; cursor: pointer; font-weight: 600;
+  background: var(--brass); color: var(--felt); border: 0; border-radius: 4px;
+}
+.fp-bet:disabled { background: var(--felt-2); color: color-mix(in srgb, var(--bone) 60%, transparent); cursor: default; }
+
+.fp-msg { min-height: 1.4em; margin: 8px 0 0; }
+.fp-msg[data-kind="ok"] { color: var(--moss); }
+.fp-msg[data-kind="err"] { color: var(--brick); }
+.fp-result { margin: 4px 0 0; font: 400 17px/1.3 "Young Serif", Georgia, serif; }
+.fp-result:empty { display: none; }
+.fp-result[data-kind="win"] { color: var(--brass); }
+.fp-result[data-kind="loss"] { color: var(--brick); }
+.fp-mybets { margin: 6px 0 0; font-size: 12px; opacity: .8; }
+.fp-mybets:empty { display: none; }
+
+.fp-dev { margin-top: 12px; padding-top: 10px; border-top: 1px dashed color-mix(in srgb, var(--bone) 30%, transparent); }
+.fp-dev summary { cursor: pointer; opacity: .8; }
+.fp-dev > * { margin-top: 6px; }
+.fp-dev-key, .fp-dev-winner, .fp-dev-btn {
+  display: block; width: 100%; padding: 6px 8px; background: var(--felt-2);
+  border: 1px solid color-mix(in srgb, var(--bone) 25%, transparent); border-radius: 4px;
+}
+.fp-dev-btn { cursor: pointer; text-align: left; }
+
+.fp-slip :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+@media (max-width: 600px) {
+  .fp-slip {
+    --fp-slip-gap: 8px;
+    top: auto;
+    bottom: 8px;
+    width: min(320px, calc(100vw - var(--fp-slip-gap) - 44px));
+  }
+  .fp-slip-panel { max-height: calc(100vh - 88px); }
+  .fp-stakes { flex-wrap: wrap; }
+  .fp-chip { flex: 1 1 44px; }
+  .fp-amount { flex: 1 1 72px; width: auto; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fp-slip { transition: transform 300ms ease; }
+  .fp-slip-arrow { transition: transform 300ms ease; }
+  .fp-seat, .fp-chip, .fp-bet { transition: background-color .15s, border-color .15s; }
+}
