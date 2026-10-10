@@ -35,6 +35,12 @@ function isPromise(value) {
   return Boolean(value && typeof value.then === 'function');
 }
 
+function liveSeed() {
+  const words = new Uint32Array(1);
+  crypto.getRandomValues(words);
+  return words[0];
+}
+
 try {
   const [dealMod, chipMod, brainMod] = await Promise.all([
     loadOptional('./ui/deal.js'),
@@ -109,7 +115,7 @@ try {
     hud.show();
   });
 
-  let table = createTable({ seed: 1 });
+  let table = createTable({ seed: liveSeed() });
   let entered = false;
   let auto = false;
   let busy = false;
@@ -121,6 +127,20 @@ try {
     const state = getPublicState(table);
     cast.updateTags(state, winners);
     hud.render(state, { busy, selectedId });
+    if (selectedId && brain && !brain.hidden && brain.classList.contains('is-open') && brainMod?.showBrain) {
+      try {
+        brainMod.showBrain(brain, getFlyInspection(table, selectedId));
+      } catch (error) {
+        console.warn('showBrain failed', error);
+      }
+    }
+    if (!busy && chipMod?.syncStacks && chipLayer) {
+      try {
+        chipMod.syncStacks(state);
+      } catch (error) {
+        console.warn('syncStacks failed', error);
+      }
+    }
     return state;
   }
 
@@ -134,10 +154,10 @@ try {
     }
   }
 
-  async function runChipAnimation(action) {
-    if (!chipMod?.playChipAnimation || !chipLayer || !action) return;
+  async function runChipAnimation(action, state) {
+    if (!chipMod?.playChipAnimation || !chipLayer) return;
     try {
-      const pending = chipMod.playChipAnimation(chipLayer, action);
+      const pending = chipMod.playChipAnimation(chipLayer, action, state);
       if (isPromise(pending)) await pending;
     } catch (error) {
       console.warn('playChipAnimation failed', error);
@@ -177,7 +197,10 @@ try {
     for (const seat of state.seats) {
       if (seat.stack === 0) setFlyEmote(seat.id, 'bust');
     }
-    await runChipAnimation(action);
+    await Promise.all([
+      runChipAnimation(action, state),
+      runDealAnimation(state),
+    ]);
     return action;
   }
 
@@ -272,7 +295,7 @@ try {
     if (!entered || busy) return;
     stopAuto();
     hud.setError('');
-    table = createTable({ seed: 1 });
+    table = createTable({ seed: liveSeed() });
     winners.clear();
     selectedId = null;
     if (brain && brainMod?.hideBrain) brainMod.hideBrain(brain);

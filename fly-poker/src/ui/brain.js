@@ -1,15 +1,17 @@
 /**
  * Fly brain overlay.
- * Circuit: layered schematic lit by inspection.activity.
- * Brain: a dense Three.js point cloud. Layered optic lobes, an irregular
- * central mass, mushroom-body horns, a descending cord, motor tips.
- * One section lights at a time, in order, from inspection.activity.
+ * Circuit, Brain, and Learning fill the bottom sheet.
+ * The 3D brain is a fruit fly: two large curved optic-lobe sheets, a narrower
+ * central brain, mushroom-body horns, and small ventral antennal lobes.
+ * Synapses are the real 45-neuron circuit. Rest colors stay bright.
+ * Active sections flare once, then playback holds on the executed action.
  * Drag orbits, the wheel zooms, Reset restores the camera.
  */
 
 import * as THREE from 'three';
 
 const LAYERS = ['sensory', 'kenyon', 'central', 'descending', 'motor'];
+const SECTION_ID = { sensory: 0, kenyon: 1, central: 2, descending: 3, motor: 4 };
 const LAYER_SIZE = [12, 10, 10, 8, 5];
 const MOTOR = ['fold', 'check', 'call', 'bet', 'raise'];
 const LAYER_TITLE = {
@@ -35,21 +37,12 @@ const REST = {
   motor: [140, 112, 64],
 };
 
-const CLOUD = [72, 86, 148];
-const BRAIN_HOT = {
-  sensory: [179, 154, 255],
-  kenyon: [210, 170, 255],
-  central: [255, 163, 77],
-  descending: [255, 115, 71],
-  motor: [255, 214, 102],
-};
-const FIRE = {
-  sensory: BRAIN_HOT.sensory,
-  visual: [102, 250, 240],
-  kenyon: BRAIN_HOT.kenyon,
-  central: BRAIN_HOT.central,
-  descending: BRAIN_HOT.descending,
-  motor: BRAIN_HOT.motor,
+const REGION = {
+  sensory: [0, 214, 224],
+  kenyon: [236, 42, 196],
+  central: [255, 168, 28],
+  descending: [36, 214, 92],
+  motor: [214, 230, 255],
 };
 const PLACE = {
   sensory: 'optic lobes',
@@ -58,7 +51,16 @@ const PLACE = {
   descending: 'descending',
   motor: 'outputs',
 };
-const DEFAULT_ORBIT = { azimuth: 0.62, polar: 1.15, radius: 3.35 };
+const PART_LINE = {
+  sensory: 'Optic lobes are taking in the cards.',
+  kenyon: 'Mushroom bodies are recalling the table.',
+  central: 'The central brain is weighing the action.',
+  descending: 'The descending path is choosing.',
+  motor: 'Motor neurons are acting.',
+};
+const DEFAULT_ORBIT = { azimuth: 0, polar: Math.PI / 2, radius: 4.6 };
+const BRAIN_SCALE = 1;
+const NARRATE_URL = 'http://127.0.0.1:8767/api/narrate';
 const QUIET = 0.02;
 const STEP_MS = 1500;
 
@@ -66,18 +68,34 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const panels = new WeakMap();
 
 const CSS = `
+#brain {
+  position: fixed !important;
+  inset: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  z-index: 40 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+}
 .fly-brain {
   position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 5;
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: 148px;
+  z-index: 1;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  height: min(640px, calc(100vh - 200px));
-  min-height: 420px;
-  padding: 12px 14px 10px;
+  width: auto;
+  height: min(460px, calc(100vh - 168px));
+  min-height: 280px;
+  max-height: min(460px, calc(100vh - 168px));
+  padding: 16px 18px 14px;
+  transform: translateY(110%);
+  transition: transform 300ms ease;
+  will-change: transform;
   color: #f6efe4;
   background: rgba(14, 11, 10, 0.94);
   border: 1px solid rgba(230, 194, 122, 0.32);
@@ -87,15 +105,24 @@ const CSS = `
   pointer-events: auto;
   overflow: hidden;
 }
+.fly-brain.is-open { transform: translateY(0); }
 .fly-brain[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .fly-brain { transition: none; }
+}
 .fly-brain-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  border-left: 4px solid var(--fly, #e6c27a);
-  padding-left: 10px;
+  align-items: center;
+  gap: 12px;
 }
+.fly-brain-badge {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: block;
+}
+.fly-brain-who { flex: 1; min-width: 0; }
 .fly-brain-kicker {
   margin: 0;
   color: #e6c27a;
@@ -159,7 +186,7 @@ const CSS = `
 .fly-brain-stage {
   position: relative;
   flex: 1 1 auto;
-  min-height: 280px;
+  min-height: 0;
 }
 .fly-brain-pane { position: absolute; inset: 0; }
 .fly-brain-pane[hidden] { display: none !important; }
@@ -178,11 +205,98 @@ const CSS = `
 .fly-brain-gl {
   position: absolute;
   inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(140px, 1fr) minmax(0, 36%);
   border-radius: 12px;
   overflow: hidden;
   background: #07080d;
 }
+.fly-brain-view { position: relative; min-width: 0; min-height: 140px; }
+.fly-brain-live {
+  position: relative;
+  z-index: 2;
+  overflow: auto;
+  min-height: 0;
+  max-height: 100%;
+  padding: 8px 14px 10px;
+  background: rgba(10, 12, 16, 0.94);
+  border-top: 1px solid rgba(235, 238, 250, 0.14);
+}
+.fly-brain-kicker.live { margin-bottom: 6px; }
+.fly-brain-thought {
+  margin: 0;
+  font-family: Palatino, Georgia, serif;
+  font-size: 18px;
+  line-height: 1.35;
+  color: #f7f1e8;
+}
+.fly-brain-part {
+  margin: 12px 0 0;
+  color: #d9cbb8;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.fly-brain-growth {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: #d9cbb8;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.fly-brain-growth li { margin: 0 0 6px; }
+.fly-brain-adapt {
+  margin: 8px 0 0;
+  color: #f6efe4;
+  font-family: Palatino, Georgia, serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.fly-brain-path {
+  margin: 12px 0 0;
+  color: #f6efe4;
+  font-family: Palatino, Georgia, serif;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.fly-brain-learn-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 14px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+}
+.fly-brain-radar {
+  display: block;
+  width: 100%;
+  flex: 1.4 1 52%;
+  min-height: 150px;
+  align-self: stretch;
+}
+.fly-brain-learn-pane .fly-brain-history {
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.fly-brain-history {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.fly-brain-history li {
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(230, 194, 122, 0.18);
+  color: #d9cbb8;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.fly-brain-history p { margin: 0 0 4px; }
 .fly-brain-gl canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
@@ -231,11 +345,13 @@ const CSS = `
 `;
 
 function ensureStyle() {
-  if (document.getElementById('fly-brain-style')) return;
-  const style = document.createElement('style');
-  style.id = 'fly-brain-style';
+  let style = document.getElementById('fly-brain-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'fly-brain-style';
+    document.head.appendChild(style);
+  }
   style.textContent = CSS;
-  document.head.appendChild(style);
 }
 
 function clamp01(value) {
@@ -433,13 +549,17 @@ function renderCircuit(rec) {
   }
   empty.hidden = true;
   board.hidden = false;
-  const width = 460;
-  const height = 500;
+  const host = board.parentElement;
+  const box = host?.getBoundingClientRect();
+  const width = Math.round(box?.width || 0) >= 8 ? Math.round(box.width) : 1200;
+  const height = Math.round(box?.height || 0) >= 8 ? Math.round(box.height) : 320;
+  board.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  board.setAttribute('preserveAspectRatio', 'none');
   const groups = groupsOf(nodes);
-  const left = 118;
-  const right = 64;
-  const top = 22;
-  const bottom = 12;
+  const left = Math.max(108, Math.min(190, width * 0.16));
+  const right = Math.max(72, Math.min(130, width * 0.1));
+  const top = Math.max(22, height * 0.08);
+  const bottom = Math.max(12, height * 0.05);
   const innerW = width - left - right;
   const innerH = height - top - bottom;
   const pos = new Map();
@@ -527,42 +647,69 @@ function unit(i, salt) {
   return x - Math.floor(x);
 }
 
-function pushPoint(out, x, y, z, section, tint) {
-  out.push({ x, y, z, section, tint });
+function pushPoint(out, x, y, z, section, tint, neuron) {
+  const point = { x, y, z, section, tint };
+  if (Number.isFinite(neuron)) point.neuron = neuron;
+  out.push(point);
 }
 
+const MOTOR_TIPS = [
+  [-0.32, -0.78, 0.1],
+  [-0.16, -0.84, 0.14],
+  [0, -0.87, 0.16],
+  [0.16, -0.84, 0.14],
+  [0.32, -0.78, 0.1],
+];
+
 function opticLobe(sign, out) {
-  const layers = [
-    { lateral: 0.62, ry: 0.44, rz: 0.32, thick: 0.05, n: 720, tint: 'sensory' },
-    { lateral: 0.86, ry: 0.58, rz: 0.4, thick: 0.06, n: 1100, tint: 'sensory' },
-    { lateral: 1.12, ry: 0.64, rz: 0.44, thick: 0.07, n: 1400, tint: 'sensory' },
-    { lateral: 1.36, ry: 0.48, rz: 0.3, thick: 0.04, n: 680, tint: 'visual' },
+  const sheets = [
+    { lateral: 2.95, ry: 0.62, rz: 0.28, bow: 0.18, n: 1200 },
+    { lateral: 2.42, ry: 0.78, rz: 0.34, bow: 0.22, n: 1700 },
+    { lateral: 1.9, ry: 0.7, rz: 0.32, bow: 0.16, n: 1400 },
+    { lateral: 1.42, ry: 0.5, rz: 0.22, bow: 0.1, n: 800 },
   ];
   let cursor = sign < 0 ? 8000 : 32000;
-  for (const layer of layers) {
-    for (let i = 0; i < layer.n; i++) {
+  for (const sheet of sheets) {
+    for (let i = 0; i < sheet.n; i++) {
       cursor += 1;
       const ang = unit(cursor, 1) * Math.PI * 2;
-      const shellPick = unit(cursor, 2);
-      const shell = shellPick > 0.3 ? 0.84 + unit(cursor, 3) * 0.16 : 0.18 + unit(cursor, 4) * 0.55;
-      const r = Math.sqrt(unit(cursor, 5)) * shell;
-      let y = Math.sin(ang) * r * layer.ry;
-      let z = Math.cos(ang) * r * layer.rz;
-      z -= r * r * 0.2;
-      y -= layer.lateral * 0.045;
-      y *= 1 + (unit(cursor, 6) - 0.5) * 0.1;
-      z *= 1 + (unit(cursor, 7) - 0.5) * 0.08;
-      const x = sign * (layer.lateral + (unit(cursor, 8) - 0.5) * layer.thick * 2);
-      pushPoint(out, x, y, z, 'sensory', layer.tint);
+      const rad = Math.sqrt(unit(cursor, 2));
+      const y = Math.sin(ang) * rad * sheet.ry;
+      const z = Math.cos(ang) * rad * sheet.rz;
+      const crown = 1 - rad * rad;
+      const x = sign * (sheet.lateral + crown * sheet.bow + (unit(cursor, 3) - 0.5) * 0.045);
+      pushPoint(out, x, y + 0.06, z - rad * rad * 0.06, 'sensory', 'sensory');
     }
   }
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < 220; i++) {
     cursor += 1;
-    const t = i / 240;
-    const x = sign * (0.34 + t * 0.28);
-    const y = (unit(cursor, 9) - 0.5) * 0.12 * (1.05 - t);
-    const z = (unit(cursor, 10) - 0.5) * 0.08;
+    const t = i / 220;
+    const x = sign * (0.55 + (1 - t) * 0.78);
+    const y = 0.04 + (unit(cursor, 4) - 0.5) * 0.07 * (0.45 + t);
+    const z = (unit(cursor, 5) - 0.5) * 0.05;
     pushPoint(out, x, y, z, 'sensory', 'sensory');
+  }
+}
+
+function antennalLobes(out) {
+  for (const sign of [-1, 1]) {
+    const ox = sign * 0.55;
+    const oy = -0.5;
+    const oz = 0.22;
+    for (let i = 0; i < 240; i++) {
+      const ang = unit(i, 90 + sign) * Math.PI * 2;
+      const rad = Math.cbrt(unit(i, 91 + sign));
+      const zz = (unit(i, 92 + sign) * 2 - 1) * rad;
+      const ring = Math.sqrt(Math.max(0, rad * rad - zz * zz));
+      pushPoint(
+        out,
+        ox + Math.cos(ang) * ring * 0.14,
+        oy + zz * 0.11,
+        oz + Math.sin(ang) * ring * 0.12,
+        'sensory',
+        'sensory',
+      );
+    }
   }
 }
 
@@ -582,69 +729,52 @@ function centralMass(out) {
     const lump = 1
       + 0.09 * Math.sin(x * 7.4 + 1.7) * Math.cos(yy * 6.1)
       + 0.05 * Math.sin(z * 9.2 + yy * 3);
-    x *= 0.4 * lump;
-    yy *= 0.36 * lump;
-    z *= 0.32 * lump;
-    yy -= 0.02;
-    const hole = Math.hypot(x / 0.1, (yy + 0.06) / 0.08, (z - 0.04) / 0.08);
+    x *= 0.36 * lump;
+    yy *= 0.38 * lump;
+    z *= 0.24 * lump;
+    yy += 0.04;
     i += 1;
-    if (hole < 1) continue;
     pushPoint(out, x, yy, z, 'central', 'central');
     kept += 1;
-  }
-  for (let k = 0; k < 480; k++) {
-    const a = unit(k, 30) * Math.PI * 2;
-    const r = Math.sqrt(unit(k, 31)) * 0.15;
-    pushPoint(
-      out,
-      Math.cos(a) * r * 1.15,
-      -0.34 + Math.sin(a) * r * 0.65,
-      0.02 + (unit(k, 32) - 0.5) * 0.1,
-      'central',
-      'central',
-    );
   }
 }
 
 function mushroomBodies(out) {
   for (const sign of [-1, 1]) {
-    for (let i = 0; i < 460; i++) {
-      const t = (i + 0.5) / 460;
-      const y = 0.1 + t * 0.58;
-      const x = sign * (0.06 + t * 0.11);
-      const z = 0.02 + Math.sin(t * 2.2) * 0.05;
+    for (let i = 0; i < 640; i++) {
+      const t = (i + 0.5) / 640;
+      const hook = Math.sin(t * Math.PI * 0.92);
+      const y = 0.32 + hook * 0.78;
+      const x = sign * (0.08 + t * 0.34 + Math.sin(t * 2.4) * 0.05);
+      const z = -0.06 + t * 0.18;
       const a = unit(i, 40 + sign) * Math.PI * 2;
-      const rad = Math.sqrt(unit(i, 41 + sign)) * (0.05 * (1 - t * 0.2));
+      const rad = Math.sqrt(unit(i, 41 + sign)) * (0.055 * (1 - t * 0.45));
       pushPoint(
         out,
         x + Math.cos(a) * rad,
         y + (unit(i, 42 + sign) - 0.5) * rad * 0.35,
-        z + Math.sin(a) * rad * 0.7,
+        z + Math.sin(a) * rad,
         'kenyon',
         'kenyon',
       );
     }
-    for (let i = 0; i < 280; i++) {
-      const t = (i + 0.5) / 280;
+    for (let i = 0; i < 220; i++) {
+      const t = (i + 0.5) / 220;
+      const y = 0.46 + Math.sin(t * Math.PI) * 0.2;
+      const x = sign * (0.3 * (1 - t) + 0.04);
+      const z = 0.1 + t * 0.14;
       const a = unit(i, 51 + sign) * Math.PI * 2;
-      const rad = Math.sqrt(unit(i, 52 + sign)) * 0.038;
-      pushPoint(
-        out,
-        sign * (0.16 * (1 - t) + 0.02) + Math.cos(a) * rad,
-        0.05 + Math.sin(a) * rad * 0.55,
-        0.05 + t * 0.26,
-        'kenyon',
-        'kenyon',
-      );
+      const rad = Math.sqrt(unit(i, 52 + sign)) * 0.04;
+      pushPoint(out, x + Math.cos(a) * rad, y, z + Math.sin(a) * rad * 0.7, 'kenyon', 'kenyon');
     }
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 180; i++) {
       const a = unit(i, 60 + sign) * Math.PI * 2;
-      const r = 0.045 + Math.sqrt(unit(i, 61 + sign)) * 0.06;
+      const r = 0.03 + Math.sqrt(unit(i, 61 + sign)) * 0.065;
       pushPoint(
         out,
-        sign * 0.2 + Math.cos(a) * r,
-        0.26 + Math.sin(a) * r * 0.5,
-        -0.18 + (unit(i, 62 + sign) - 0.4) * 0.07,
+        sign * 0.16 + Math.cos(a) * r,
+        0.3 + Math.sin(a) * r * 0.45,
+        -0.08 + (unit(i, 62 + sign) - 0.5) * 0.05,
         'kenyon',
         'kenyon',
       );
@@ -653,42 +783,35 @@ function mushroomBodies(out) {
 }
 
 function descendingTract(out) {
-  for (const sign of [-1, 1]) {
-    for (let i = 0; i < 420; i++) {
-      const t = (i + 0.5) / 420;
-      const a = unit(i, 70 + sign) * Math.PI * 2;
-      const rad = Math.sqrt(unit(i, 71 + sign)) * (0.065 * (1 - t * 0.5));
-      pushPoint(
-        out,
-        sign * (0.045 + t * 0.02) + Math.cos(a) * rad,
-        -0.4 - t * 0.55,
-        -0.02 - t * 0.1 + Math.sin(a) * rad,
-        'descending',
-        'descending',
-      );
-    }
+  for (let i = 0; i < 480; i++) {
+    const t = (i + 0.5) / 480;
+    const a = unit(i, 70) * Math.PI * 2;
+    const rad = Math.sqrt(unit(i, 71)) * (0.055 * (1 - t * 0.25));
+    const side = i % 2 === 0 ? -1 : 1;
+    pushPoint(
+      out,
+      side * 0.05 + Math.cos(a) * rad,
+      -0.14 - t * 0.4,
+      0.02 + Math.sin(a) * rad * 0.55,
+      'descending',
+      'descending',
+    );
   }
 }
 
 function motorTips(out) {
-  const tips = [
-    [-0.14, -1.02, 0.02],
-    [-0.05, -1.08, 0.07],
-    [0.05, -1.1, 0.0],
-    [0.13, -1.04, -0.05],
-    [0.0, -0.98, -0.08],
-  ];
-  tips.forEach((tip, index) => {
-    for (let i = 0; i < 100; i++) {
+  MOTOR_TIPS.forEach((tip, index) => {
+    for (let i = 0; i < 90; i++) {
       const a = unit(i, 80 + index) * Math.PI * 2;
-      const r = Math.sqrt(unit(i, 81 + index)) * 0.042;
+      const r = Math.sqrt(unit(i, 81 + index)) * 0.045;
       pushPoint(
         out,
         tip[0] + Math.cos(a) * r,
-        tip[1] + (unit(i, 82 + index) - 0.5) * 0.035,
-        tip[2] + Math.sin(a) * r,
+        tip[1] + (unit(i, 82 + index) - 0.5) * 0.028,
+        tip[2] + Math.sin(a) * r * 0.7,
         'motor',
         'motor',
+        index,
       );
     }
   });
@@ -698,6 +821,7 @@ function buildCloud() {
   const out = [];
   opticLobe(-1, out);
   opticLobe(1, out);
+  antennalLobes(out);
   centralMass(out);
   mushroomBodies(out);
   descendingTract(out);
@@ -736,26 +860,90 @@ function hotSections(means) {
   return LAYERS.filter((layer) => (means[layer] || 0) >= QUIET);
 }
 
-function replayHot(now, t0, hot) {
-  if (!hot.length) return { layer: null, gain: 0, index: 0, count: 0 };
-  if (hot.length === 1) return { layer: hot[0], gain: 1, index: 0, count: 1 };
-  const span = hot.length * STEP_MS;
-  const elapsed = ((now - t0) % span + span) % span;
-  const index = Math.min(hot.length - 1, Math.floor(elapsed / STEP_MS));
+function playbackSections(means, executed) {
+  const hot = hotSections(means);
+  if (!executed) return hot;
+  const steps = hot.filter((layer) => layer !== 'motor');
+  steps.push('motor');
+  return steps;
+}
+
+function replayHot(now, t0, hot, slot) {
+  // One pass, then hold. The last step is the executed action when motor fired. Never wraps.
+  const out = slot || { layer: null, gain: 0, index: 0, count: 0, resting: true };
+  if (!hot || !hot.length) {
+    out.layer = null;
+    out.gain = 0;
+    out.index = 0;
+    out.count = 0;
+    out.resting = true;
+    return out;
+  }
+  if (hot.length === 1) {
+    out.layer = hot[0];
+    out.gain = 1;
+    out.index = 0;
+    out.count = 1;
+    out.resting = true;
+    return out;
+  }
+  const elapsed = Math.max(0, now - t0);
+  const last = hot.length - 1;
+  const index = Math.min(last, Math.floor(elapsed / STEP_MS));
   const phase = (elapsed - index * STEP_MS) / STEP_MS;
   const rise = smooth(Math.min(1, phase / 0.12));
+  out.index = index;
+  out.count = hot.length;
+  if (index === last) {
+    out.layer = hot[last];
+    out.gain = rise;
+    out.resting = phase >= 0.12;
+    return out;
+  }
   const fall = phase < 0.84 ? 1 : 1 - smooth((phase - 0.84) / 0.16);
-  return { layer: hot[index], gain: rise * fall, index, count: hot.length };
+  out.layer = hot[index];
+  out.gain = rise * fall;
+  out.resting = false;
+  return out;
+}
+
+function firedPath(inspection) {
+  const { nodes, activity } = modelOf(inspection);
+  const means = sectionMeans(nodes, activity);
+  const hot = hotSections(means);
+  if (!hot.length) return 'No stage fired on this step.';
+  const executed = inspection?.situation?.executed || inspection?.decision?.action || '';
+  const logits = inspection?.situation?.logits || inspection?.decision?.logits;
+  return hot.map((layer) => {
+    if (layer !== 'motor') return `${LAYER_TITLE[layer]} ${means[layer].toFixed(2)}`;
+    const neuron = nodes.find((node) => node.layer === 'motor' && node.label === executed);
+    const activation = neuron ? activity[neuron.index] : means.motor;
+    const score = logits && Number.isFinite(logits[executed]) && logits[executed] > -1e8 ? logits[executed] : null;
+    const action = executed || 'no action recorded';
+    const bits = [`Motor: ${action}`];
+    if (Number.isFinite(activation)) bits.push(activation.toFixed(2));
+    if (score != null) bits.push(`score ${score.toFixed(2)}`);
+    return bits.join(' ');
+  }).join(' → ');
+}
+
+function framedRadius(aspect, zoom) {
+  const halfH = 1.12;
+  const halfW = 3.3;
+  const tanV = Math.tan((33 * Math.PI) / 360);
+  const dist = Math.max(halfH / tanV, halfW / (tanV * Math.max(0.75, aspect || 1)));
+  return dist * (zoom / DEFAULT_ORBIT.radius);
 }
 
 function placeCamera(camera, orbit) {
+  const radius = framedRadius(camera.aspect, orbit.radius);
   const sinP = Math.sin(orbit.polar);
   camera.position.set(
-    orbit.radius * sinP * Math.sin(orbit.azimuth),
-    orbit.radius * Math.cos(orbit.polar),
-    orbit.radius * sinP * Math.cos(orbit.azimuth),
+    radius * sinP * Math.sin(orbit.azimuth),
+    radius * Math.cos(orbit.polar),
+    radius * sinP * Math.cos(orbit.azimuth),
   );
-  camera.lookAt(0, -0.04, 0);
+  camera.lookAt(0, 0.12, 0);
 }
 
 function resetOrbit(rec) {
@@ -763,18 +951,59 @@ function resetOrbit(rec) {
   if (rec.view) placeCamera(rec.view.camera, rec.orbit);
 }
 
+const GAIN_GLSL = `
+uniform float u0;
+uniform float u1;
+uniform float u2;
+uniform float u3;
+uniform float u4;
+float gainAt(float section) {
+  if (section < 0.5) return u0;
+  if (section < 1.5) return u1;
+  if (section < 2.5) return u2;
+  if (section < 3.5) return u3;
+  return u4;
+}
+`;
+
 const POINT_VERT = `
 attribute vec3 color;
-attribute float glow;
+attribute float neuron;
+attribute float section;
 varying vec3 vColor;
 varying float vGlow;
 uniform float uSize;
+${GAIN_GLSL}
 void main() {
-  vColor = color;
-  vGlow = glow;
+  float level = neuron * gainAt(section);
+  vColor = mix(color, vec3(1.0), clamp(level, 0.0, 1.0) * 0.65);
+  vGlow = level;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = clamp(uSize * (0.8 + glow) * (3.2 / max(0.35, -mv.z)), 1.0, 4.2);
+  gl_PointSize = clamp(uSize * (1.15 + level * 2.4) * (3.4 / max(0.35, -mv.z)), 1.15, 7.0);
   gl_Position = projectionMatrix * mv;
+}
+`;
+
+const LINE_VERT = `
+attribute vec3 color;
+attribute float actFrom;
+attribute float actTo;
+attribute float fromSection;
+attribute float toSection;
+varying vec3 vColor;
+${GAIN_GLSL}
+void main() {
+  float fromGain = gainAt(fromSection);
+  float level = fromGain > 0.0 ? actFrom * fromGain : actTo * gainAt(toSection);
+  vColor = color + (1.0 - color) * level;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const LINE_FRAG = `
+varying vec3 vColor;
+void main() {
+  gl_FragColor = vec4(vColor, 0.62);
 }
 `;
 
@@ -785,7 +1014,7 @@ void main() {
   vec2 q = gl_PointCoord - vec2(0.5);
   float d = dot(q, q);
   if (d > 0.25) discard;
-  float alpha = smoothstep(0.25, 0.02, d) * (0.5 + vGlow * 0.5);
+  float alpha = smoothstep(0.25, 0.04, d) * (0.94 + vGlow * 0.06);
   gl_FragColor = vec4(vColor, alpha);
 }
 `;
@@ -808,85 +1037,334 @@ function buildView(host) {
   const count = samples.length;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
-  const glow = new Float32Array(count);
+  const neuron = new Float32Array(count);
+  const section = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const point = samples[i];
     positions[i * 3] = point.x;
     positions[i * 3 + 1] = point.y;
     positions[i * 3 + 2] = point.z;
-    colors[i * 3] = CLOUD[0] / 255;
-    colors[i * 3 + 1] = CLOUD[1] / 255;
-    colors[i * 3 + 2] = CLOUD[2] / 255;
+    const rest = REGION[point.section] || REGION.central;
+    colors[i * 3] = rest[0] / 255;
+    colors[i * 3 + 1] = rest[1] / 255;
+    colors[i * 3 + 2] = rest[2] / 255;
+    section[i] = SECTION_ID[point.section] ?? SECTION_ID.central;
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geometry.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
+  geometry.setAttribute('neuron', new THREE.BufferAttribute(neuron, 1));
+  geometry.setAttribute('section', new THREE.BufferAttribute(section, 1));
+  const uniforms = {
+    uSize: { value: 2.35 },
+    u0: { value: 0 },
+    u1: { value: 0 },
+    u2: { value: 0 },
+    u3: { value: 0 },
+    u4: { value: 0 },
+  };
   const material = new THREE.ShaderMaterial({
-    uniforms: { uSize: { value: 2.05 } },
+    uniforms,
     vertexShader: POINT_VERT,
     fragmentShader: POINT_FRAG,
     transparent: true,
     depthWrite: false,
   });
   const points = new THREE.Points(geometry, material);
-  scene.add(points);
-  return { renderer, scene, camera, points, samples, count };
+  const group = new THREE.Group();
+  group.scale.setScalar(BRAIN_SCALE);
+  group.add(points);
+  scene.add(group);
+  return {
+    renderer,
+    scene,
+    camera,
+    group,
+    points,
+    lines: null,
+    pairs: [],
+    synapseKey: null,
+    samples,
+    count,
+    uniforms,
+    replay: { layer: null, gain: 0, index: 0, count: 0, resting: true },
+    hot: [],
+    means: null,
+    baked: null,
+  };
+}
+
+function neuronSpot(layer, index) {
+  const i = index | 0;
+  if (layer === 'sensory') {
+    const sign = i < 6 ? -1 : 1;
+    const t = (i % 6) / 5;
+    const ang = -1.05 + t * 2.1;
+    const lateral = 2.15 + Math.cos(ang) * 0.42;
+    return { x: sign * lateral, y: Math.sin(ang) * 0.58 + 0.06, z: 0.04 };
+  }
+  if (layer === 'kenyon') {
+    const sign = i < 5 ? -1 : 1;
+    const t = (i % 5) / 4;
+    return {
+      x: sign * (0.08 + t * 0.34),
+      y: 0.32 + Math.sin(t * Math.PI * 0.92) * 0.78,
+      z: -0.06 + t * 0.18,
+    };
+  }
+  if (layer === 'central') {
+    const ang = (i / 10) * Math.PI * 2;
+    const rad = 0.07 + (i % 3) * 0.035;
+    return { x: Math.cos(ang) * rad, y: 0.04 + Math.sin(ang) * rad * 0.85, z: ((i % 2) - 0.5) * 0.06 };
+  }
+  if (layer === 'descending') {
+    const t = i / 7;
+    return { x: (i % 2 === 0 ? -1 : 1) * 0.06, y: -0.16 - t * 0.36, z: 0.02 };
+  }
+  const tip = MOTOR_TIPS[Math.max(0, Math.min(MOTOR_TIPS.length - 1, i))] || MOTOR_TIPS[0];
+  return { x: tip[0], y: tip[1], z: tip[2] };
+}
+
+function synapseLinks(inspection) {
+  const { nodes } = modelOf(inspection || {});
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const edges = Array.isArray(inspection?.edges) ? inspection.edges : [];
+  const links = [];
+  for (const edge of edges) {
+    const from = byId.get(String(edge.from)) || nodes[edge.from];
+    const to = byId.get(String(edge.to)) || nodes[edge.to];
+    if (!from || !to || !LAYERS.includes(from.layer) || !LAYERS.includes(to.layer)) continue;
+    links.push({
+      fromId: from.id,
+      toId: to.id,
+      fromIndex: from.index,
+      toIndex: to.index,
+      fromLayer: from.layer,
+      toLayer: to.layer,
+      a: neuronSpot(from.layer, from.y),
+      b: neuronSpot(to.layer, to.y),
+    });
+  }
+  return links;
+}
+
+function bendOf(fromId, toId) {
+  let hash = 0;
+  const text = `${fromId}${toId}`;
+  for (let i = 0; i < text.length; i++) hash = (hash * 33 + text.charCodeAt(i)) % 997;
+  return ((hash / 997) - 0.5) * 0.22;
+}
+
+function arcOf(a, b, bend) {
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 + bend, z: (a.z + b.z) / 2 + bend * 0.35 };
+  const steps = 4;
+  const points = [];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const u = 1 - t;
+    points.push({
+      x: u * u * a.x + 2 * u * t * mid.x + t * t * b.x,
+      y: u * u * a.y + 2 * u * t * mid.y + t * t * b.y,
+      z: u * u * a.z + 2 * u * t * mid.z + t * t * b.z,
+    });
+  }
+  return points;
+}
+
+function litActivity(value) {
+  const n = Number.isFinite(value) ? value : 0;
+  return n >= QUIET ? n : 0;
+}
+
+function bakePointNeurons(samples, nodes, activity) {
+  const values = sectionSamples(nodes, activity);
+  const out = new Float32Array(samples.length);
+  const cursor = {};
+  for (const layer of LAYERS) cursor[layer] = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const point = samples[i];
+    const row = values[point.section] || [];
+    let neuron = 0;
+    if (Number.isFinite(point.neuron)) neuron = row[point.neuron] || 0;
+    else if (row.length) {
+      neuron = row[cursor[point.section] % row.length];
+      cursor[point.section] += 1;
+    }
+    out[i] = neuron >= QUIET ? neuron : 0;
+  }
+  return out;
+}
+
+function writeLineActivity(view, activity) {
+  const lines = view.lines;
+  if (!lines || !view.pairs.length) return;
+  const from = lines.geometry.getAttribute('actFrom').array;
+  const to = lines.geometry.getAttribute('actTo').array;
+  for (const pair of view.pairs) {
+    const actFrom = litActivity(activity[pair.fromIndex]);
+    const actTo = litActivity(activity[pair.toIndex]);
+    for (let vertex = pair.v0; vertex < pair.v1; vertex++) {
+      from[vertex] = actFrom;
+      to[vertex] = actTo;
+    }
+  }
+  lines.geometry.getAttribute('actFrom').needsUpdate = true;
+  lines.geometry.getAttribute('actTo').needsUpdate = true;
+}
+
+function ensureSynapses(view, inspection, activity) {
+  const links = synapseLinks(inspection);
+  const key = links.map((link) => `${link.fromId}>${link.toId}`).join(',');
+  if (key === view.synapseKey) {
+    writeLineActivity(view, activity);
+    return;
+  }
+  view.synapseKey = key;
+  if (view.lines) {
+    view.group.remove(view.lines);
+    view.lines.geometry.dispose();
+    view.lines.material.dispose();
+    view.lines = null;
+  }
+  view.pairs = links;
+  if (!links.length) return;
+  const arcs = links.map((link) => arcOf(link.a, link.b, bendOf(link.fromId, link.toId)));
+  let vertices = 0;
+  arcs.forEach((pts) => { vertices += Math.max(0, pts.length - 1) * 2; });
+  const linePositions = new Float32Array(vertices * 3);
+  const lineColors = new Float32Array(vertices * 3);
+  const actFrom = new Float32Array(vertices);
+  const actTo = new Float32Array(vertices);
+  const fromSection = new Float32Array(vertices);
+  const toSection = new Float32Array(vertices);
+  let cursor = 0;
+  links.forEach((link, index) => {
+    const pts = arcs[index];
+    const rest = REGION[link.fromLayer] || REGION.central;
+    const fromId = SECTION_ID[link.fromLayer] ?? SECTION_ID.central;
+    const toId = SECTION_ID[link.toLayer] ?? SECTION_ID.central;
+    const fromValue = litActivity(activity[link.fromIndex]);
+    const toValue = litActivity(activity[link.toIndex]);
+    link.v0 = cursor;
+    for (let s = 0; s < pts.length - 1; s++) {
+      const a = pts[s];
+      const b = pts[s + 1];
+      for (const point of [a, b]) {
+        linePositions[cursor * 3] = point.x;
+        linePositions[cursor * 3 + 1] = point.y;
+        linePositions[cursor * 3 + 2] = point.z;
+        lineColors[cursor * 3] = rest[0] / 255;
+        lineColors[cursor * 3 + 1] = rest[1] / 255;
+        lineColors[cursor * 3 + 2] = rest[2] / 255;
+        actFrom[cursor] = fromValue;
+        actTo[cursor] = toValue;
+        fromSection[cursor] = fromId;
+        toSection[cursor] = toId;
+        cursor += 1;
+      }
+    }
+    link.v1 = cursor;
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+  geometry.setAttribute('actFrom', new THREE.BufferAttribute(actFrom, 1));
+  geometry.setAttribute('actTo', new THREE.BufferAttribute(actTo, 1));
+  geometry.setAttribute('fromSection', new THREE.BufferAttribute(fromSection, 1));
+  geometry.setAttribute('toSection', new THREE.BufferAttribute(toSection, 1));
+  view.lines = new THREE.LineSegments(geometry, new THREE.ShaderMaterial({
+    uniforms: view.uniforms,
+    vertexShader: LINE_VERT,
+    fragmentShader: LINE_FRAG,
+    transparent: true,
+    depthWrite: false,
+  }));
+  view.group.add(view.lines);
 }
 
 function resizeView(rec) {
   const view = rec.view;
   if (!view) return;
-  const width = rec.brainPane.clientWidth;
-  const height = rec.brainPane.clientHeight;
+  const width = rec.viewHost.clientWidth;
+  const height = rec.viewHost.clientHeight;
   if (width < 2 || height < 2) return;
+  if (view.viewW === width && view.viewH === height) return;
+  view.viewW = width;
+  view.viewH = height;
   view.camera.aspect = width / height;
   view.camera.updateProjectionMatrix();
   view.renderer.setSize(width, height, false);
 }
 
-function paintRegions(rec, now) {
-  const { nodes, activity } = modelOf(rec.inspection);
-  const means = sectionMeans(nodes, activity);
-  const samples = sectionSamples(nodes, activity);
-  const hot = hotSections(means);
-  const replay = replayHot(now, rec.brainT0 || now, hot);
-  const view = rec.view;
-  const colors = view.points.geometry.getAttribute('color');
-  const glowAttr = view.points.geometry.getAttribute('glow');
-  const cursor = {};
-  for (const layer of LAYERS) cursor[layer] = 0;
-  for (let i = 0; i < view.count; i++) {
-    const point = view.samples[i];
-    const values = samples[point.section] || [];
-    const neuron = values.length ? values[cursor[point.section] % values.length] : 0;
-    cursor[point.section] += 1;
-    const gain = point.section === replay.layer ? replay.gain : 0;
-    const level = neuron >= QUIET ? neuron * gain : 0;
-    const hotColor = FIRE[point.tint] || FIRE[point.section] || FIRE.central;
-    colors.setXYZ(
-      i,
-      (CLOUD[0] + (hotColor[0] - CLOUD[0]) * level) / 255,
-      (CLOUD[1] + (hotColor[1] - CLOUD[1]) * level) / 255,
-      (CLOUD[2] + (hotColor[2] - CLOUD[2]) * level) / 255,
-    );
-    glowAttr.setX(i, level);
-  }
-  colors.needsUpdate = true;
-  glowAttr.needsUpdate = true;
+function setText(el, text) {
+  if (!el || el.textContent === text) return;
+  el.textContent = text;
+}
+
+function bakeBrain(view, inspection) {
+  const { nodes, activity } = modelOf(inspection || {});
+  view.means = sectionMeans(nodes, activity);
+  const executed = inspection?.situation?.executed || inspection?.decision?.action || '';
+  view.hot = playbackSections(view.means, executed);
+  const baked = bakePointNeurons(view.samples, nodes, activity);
+  const neuron = view.points.geometry.getAttribute('neuron');
+  neuron.array.set(baked);
+  neuron.needsUpdate = true;
+  ensureSynapses(view, inspection, activity);
+}
+
+function applyGains(uniforms, replay) {
+  const gain = replay.layer ? replay.gain : 0;
+  const id = replay.layer ? SECTION_ID[replay.layer] : -1;
+  uniforms.u0.value = id === 0 ? gain : 0;
+  uniforms.u1.value = id === 1 ? gain : 0;
+  uniforms.u2.value = id === 2 ? gain : 0;
+  uniforms.u3.value = id === 3 ? gain : 0;
+  uniforms.u4.value = id === 4 ? gain : 0;
+}
+
+function paintCaption(rec, replay) {
+  const hot = rec.view.hot;
+  const executed = rec.inspection?.situation?.executed || rec.inspection?.decision?.action || '';
+  const key = !hot.length
+    ? 'rest'
+    : `${replay.layer}|${replay.index}|${replay.count}|${replay.resting ? 1 : 0}|${executed}`;
+  if (key === rec.captionKey) return;
+  rec.captionKey = key;
   if (!hot.length) {
-    rec.step.textContent = 'Quiet';
-    rec.count.textContent = '';
-    rec.links.textContent = 'no section above threshold';
+    setText(rec.step, 'Resting');
+    setText(rec.count, '');
+    setText(rec.links, 'no section above threshold');
+    setText(rec.part, 'No region is flaring. The colors are the resting brain.');
+    setText(rec.path, 'No stage fired on this step.');
     return;
   }
-  rec.step.textContent = LAYER_TITLE[replay.layer] || '';
-  rec.count.textContent = `step ${replay.index + 1} / ${replay.count}`;
-  rec.links.textContent = PLACE[replay.layer] || '';
+  setText(rec.step, LAYER_TITLE[replay.layer] || '');
+  setText(rec.count, `step ${replay.index + 1} / ${replay.count}`);
+  setText(rec.links, PLACE[replay.layer] || '');
+  setText(
+    rec.part,
+    replay.layer === 'motor' && executed
+      ? `Motor neurons are acting: ${executed}.`
+      : (PART_LINE[replay.layer] || ''),
+  );
+  setText(rec.path, replay.resting ? firedPath(rec.inspection) : '');
+}
+
+function paintRegions(rec, now) {
+  const view = rec.view;
+  if (view.baked !== rec.inspection) {
+    bakeBrain(view, rec.inspection);
+    view.baked = rec.inspection;
+    rec.captionKey = '';
+  }
+  const replay = replayHot(now, rec.brainT0 || now, view.hot, view.replay);
+  applyGains(view.uniforms, replay);
+  paintCaption(rec, replay);
 }
 
 function renderView(rec, now) {
-  if (!rec.view) rec.view = buildView(rec.brainPane);
+  if (!rec.view) rec.view = buildView(rec.viewHost);
   resizeView(rec);
   placeCamera(rec.view.camera, rec.orbit);
   paintRegions(rec, now);
@@ -900,17 +1378,399 @@ function disposeView(rec) {
   view.renderer.domElement.remove();
   view.points.geometry.dispose();
   view.points.material.dispose();
+  if (view.lines) {
+    view.lines.geometry.dispose();
+    view.lines.material.dispose();
+  }
   rec.view = null;
+}
+
+function thoughtLine(inspection) {
+  const decision = inspection?.decision;
+  const reasons = Array.isArray(decision?.reasons) ? decision.reasons.map((line) => String(line)) : [];
+  if (!decision?.action || !reasons.length) return 'Nothing to weigh yet.';
+  const body = reasons.filter((line) => !line.startsWith('Chose') && !line.startsWith('Circuit readout'));
+  const hand = body.find((line) => line.startsWith('Hand:'));
+  const equity = body.find((line) => line.startsWith('Equity'));
+  const weigh = body.find((line) => (
+    /bluff|pressure|Weak|Strong|Close|fold|bet|invested|Large bet/i.test(line)
+    && !line.startsWith('Hand:')
+    && !line.startsWith('Equity')
+  ));
+  const bits = [];
+  if (hand) bits.push(hand.slice(6).trim());
+  if (equity) {
+    const match = equity.match(/(\d+)% vs pot odds (\d+)%/);
+    bits.push(match ? `${match[1]}% equity against ${match[2]}% pot odds` : equity.replace(/^Equity estimate /, '').trim());
+  }
+  let line = bits.length ? `Weighing ${bits.join(', ')}.` : '';
+  if (weigh) line = line ? `${line} ${weigh.endsWith('.') ? weigh : `${weigh}.`}` : (weigh.endsWith('.') ? weigh : `${weigh}.`);
+  if (line) return line;
+  const fallback = body[body.length - 1];
+  if (fallback) return fallback.endsWith('.') ? fallback : `${fallback}.`;
+  return `Leaning toward ${decision.action}.`;
+}
+
+function spanOf(before, after) {
+  if (!Number.isFinite(before) || !Number.isFinite(after)) return '';
+  return ` (${before.toFixed(3)} → ${after.toFixed(3)})`;
+}
+
+function learnedLines(inspection) {
+  const last = inspection?.learning?.last;
+  if (!last) return ['Nothing has been learned yet.'];
+  const deltas = Array.isArray(last.deltas) ? last.deltas : [];
+  const hand = Number.isFinite(last.handNumber) ? `Hand ${last.handNumber}` : 'Last hand';
+  if (!deltas.length) return [`${hand}: nothing tracked moved.`];
+  const lines = [];
+  let note = null;
+  for (const delta of deltas) {
+    const parameter = String(delta?.parameter || '');
+    const span = spanOf(Number(delta.before), Number(delta.after));
+    if (parameter.startsWith('gain:')) {
+      const link = parameter.slice(5).replace('->', ' → ');
+      const verb = Number(delta.delta) < 0 ? 'eased' : 'strengthened';
+      lines.push(`${hand}: synapse ${link} ${verb}${span}.`);
+    } else if (parameter === 'aggression' || parameter === 'bluff' || parameter === 'foldToPressure') {
+      const label = parameter === 'foldToPressure' ? 'Fold-to-pressure' : parameter === 'bluff' ? 'Bluff rate' : 'Aggression';
+      lines.push(`${hand}: ${label} nudged${span}.`);
+    } else if (parameter.startsWith('opp.') && (!note || Math.abs(Number(delta.delta) || 0) > Math.abs(Number(note.delta) || 0))) {
+      note = delta;
+    }
+  }
+  if (note) lines.push(`${hand}: ${note.why || note.parameter}.`);
+  return lines.length ? lines : [`${hand}: nothing tracked moved.`];
+}
+
+function badgeOf(accessory, color) {
+  const el = svg('svg', {
+    viewBox: '0 0 48 48',
+    class: 'fly-brain-badge',
+    'aria-hidden': 'true',
+  });
+  const add = (name, attrs) => el.appendChild(svg(name, { fill: color, ...attrs }));
+  if (accessory === 'top-hat') {
+    add('rect', { x: 16, y: 8, width: 16, height: 16, rx: 1 });
+    add('ellipse', { cx: 24, cy: 28, rx: 16, ry: 5 });
+  } else if (accessory === 'scarf') {
+    add('path', { d: 'M8 18c10 3 22 3 32 0-2 7-8 9-12 8 3 6 5 12 3 16-5-5-7-10-7-14-1 5-3 11-8 16-1-5 1-11 3-16-5 1-9-1-11-10z' });
+  } else if (accessory === 'monocle') {
+    add('circle', { cx: 22, cy: 20, r: 10, fill: 'none', stroke: color, 'stroke-width': 3 });
+    add('path', { d: 'M31 26c3 5 3 9 1 14', fill: 'none', stroke: color, 'stroke-width': 2 });
+  } else if (accessory === 'bow') {
+    add('path', { d: 'M24 22 C18 10 6 12 8 22 C14 24 20 23 24 22z' });
+    add('path', { d: 'M24 22 C30 10 42 12 40 22 C34 24 28 23 24 22z' });
+    add('circle', { cx: 24, cy: 23, r: 3 });
+    add('path', { d: 'M22 25c-1 6-3 10-7 12 3-1 5-4 6-8z' });
+    add('path', { d: 'M26 25c1 6 3 10 7 12-3-1-5-4-6-8z' });
+  } else if (accessory === 'crown') {
+    add('path', { d: 'M6 32 L10 16 L18 24 L24 10 L30 24 L38 16 L42 32 Z' });
+    add('rect', { x: 6, y: 32, width: 36, height: 5 });
+  } else {
+    add('circle', { cx: 24, cy: 24, r: 8 });
+  }
+  return el;
+}
+
+function cardText(cards) {
+  if (!Array.isArray(cards) || !cards.length) return '';
+  return cards.map((card) => card?.code || `${card?.rank || ''}${card?.suit || ''}`).filter(Boolean).join(' ');
+}
+
+function decisionText(inspection) {
+  const decision = inspection?.decision;
+  const situation = inspection?.situation || {};
+  if (!decision?.action) {
+    return {
+      hand: 'No hand is in front of this fly.',
+      why: 'No scores yet.',
+      executed: 'No action has been executed.',
+      activations: 'Activations are quiet.',
+    };
+  }
+  const hole = cardText(situation.hole) || 'hole cards not on this step';
+  const board = cardText(situation.board) || 'no board';
+  const street = situation.street || decision.street || 'unknown street';
+  const legal = (situation.legal || decision.legal || []).join(', ') || 'legal actions were not recorded';
+  const logits = situation.logits || decision.logits;
+  let why = 'No numeric scores on this decision.';
+  if (logits && typeof logits === 'object') {
+    const rows = Object.entries(logits).filter(([, value]) => Number.isFinite(value) && value > -1e8);
+    rows.sort((a, b) => b[1] - a[1]);
+    const chosen = logits[decision.action];
+    const alt = rows.find(([name]) => name !== decision.action);
+    if (Number.isFinite(chosen) && alt) why = `${decision.action} scored ${chosen.toFixed(2)}, ahead of ${alt[0]} at ${alt[1].toFixed(2)}.`;
+    else if (Number.isFinite(chosen)) why = `${decision.action} scored ${chosen.toFixed(2)}. No alternative score is recorded.`;
+  }
+  const { nodes, activity } = modelOf(inspection);
+  const means = sectionMeans(nodes, activity);
+  const activations = activity.some((value) => value !== 0)
+    ? LAYERS.map((layer) => `${LAYER_TITLE[layer]} ${means[layer].toFixed(2)}`).join(' · ')
+    : 'Activations are quiet on this step.';
+  const amount = Number.isFinite(decision.amount) && decision.amount > 0 ? ` ${decision.amount}` : '';
+  return {
+    hand: `${street}: ${hole}. Board ${board}. Legal: ${legal}.`,
+    why,
+    executed: `The engine executed ${decision.action}${amount}.`,
+    activations,
+  };
+}
+
+function compareText(inspection) {
+  const compare = inspection?.policyCompare;
+  if (!compare || !compare.decisions) return 'The frozen copy has not been scored yet.';
+  const last = compare.lastLive && compare.lastFrozen
+    ? ` Last step the live policy ${compare.lastLive} and the frozen copy would have ${compare.lastFrozen}.`
+    : '';
+  const moved = compare.moved
+    ? ` Since hand ${compare.sinceHand}, ${compare.handsSince} later hand${compare.handsSince === 1 ? '' : 's'}, chips ${compare.chipsSince >= 0 ? '+' : ''}${compare.chipsSince}, wins ${compare.winsSince}.`
+    : ' The policy has not moved.';
+  return `Frozen copy disagrees on ${compare.disagreements} of ${compare.decisions} decisions.${last}${moved}`;
 }
 
 function paintChrome(rec) {
   const inspection = rec.inspection || {};
-  rec.root.style.setProperty('--fly', accentOf(inspection));
+  const color = accentOf(inspection);
+  rec.root.style.setProperty('--fly', color);
   rec.style.textContent = inspection.playstyle?.label || inspection.style || '';
   rec.name.textContent = inspection.name || 'Fly';
   rec.action.textContent = actionText(inspection.decision);
   rec.reason.textContent = reasonText(inspection.decision);
   rec.learn.textContent = learningText(inspection.learning);
+  rec.thought.textContent = thoughtLine(inspection);
+  const brief = decisionText(inspection);
+  rec.hand.textContent = brief.hand;
+  rec.why.textContent = brief.why;
+  rec.executed.textContent = brief.executed;
+  rec.activations.textContent = brief.activations;
+  rec.compare.textContent = compareText(inspection);
+  const learned = learnedLines(inspection);
+  rec.growth.replaceChildren(...learned.map((line) => {
+    const item = document.createElement('li');
+    item.textContent = line;
+    return item;
+  }));
+  paintHistory(rec);
+  requestNarration(rec);
+  const next = badgeOf(inspection.accessory, color);
+  rec.badge.replaceWith(next);
+  rec.badge = next;
+}
+
+function narrationFacts(record) {
+  if (!record) return [];
+  return learnedLines({ learning: { last: record } }).filter((line) => (
+    line && !line.startsWith('Nothing has been learned') && !line.endsWith('nothing tracked moved.')
+  ));
+}
+
+function narrationKey(inspection, record, facts) {
+  return `${inspection?.id || ''}|${record?.handNumber ?? ''}|${facts.join('\n')}`;
+}
+
+function historyItem(text) {
+  const item = document.createElement('li');
+  const line = document.createElement('p');
+  line.textContent = text;
+  item.append(line);
+  return item;
+}
+
+function syncProfileCompare(rec, history) {
+  const select = rec.comparePick;
+  if (!select) return null;
+  const rows = Array.isArray(history) ? history : [];
+  const key = rows.map((row) => row.handNumber).join(',');
+  if (select.dataset.hands !== key) {
+    const previous = select.value;
+    select.replaceChildren();
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Current only';
+    select.append(none);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const option = document.createElement('option');
+      option.value = String(rows[i].handNumber);
+      option.textContent = `Hand ${rows[i].handNumber}`;
+      select.append(option);
+    }
+    select.dataset.hands = key;
+    if (previous && rows.some((row) => String(row.handNumber) === previous)) select.value = previous;
+    else if (rows.length) select.value = String(rows[rows.length - 1].handNumber);
+    else select.value = '';
+  }
+  if (!select.value) return null;
+  return rows.find((row) => String(row.handNumber) === select.value) || null;
+}
+
+function traceRadar(g, at, values, fill, stroke, width) {
+  if (!values || !values.length) return;
+  g.beginPath();
+  values.forEach((value, i) => {
+    const [x, y] = at(i, Math.max(0, Math.min(1, value)));
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  });
+  g.closePath();
+  g.fillStyle = fill;
+  g.fill();
+  g.strokeStyle = stroke;
+  g.lineWidth = width;
+  g.stroke();
+}
+
+function paintRadar(rec) {
+  const canvas = rec.radar;
+  const profile = rec.inspection && rec.inspection.profile;
+  if (!canvas || !profile || !Array.isArray(profile.axes) || profile.axes.length < 3) return;
+  const cssW = canvas.clientWidth;
+  const cssH = canvas.clientHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const measured = cssW >= 8 && cssH >= 8;
+  const w = Math.round((measured ? cssW : 960) * (measured ? dpr : 1));
+  const h = Math.round((measured ? cssH : 280) * (measured ? dpr : 1));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const rx = w * 0.34;
+  const ry = h * 0.28;
+  const axes = profile.axes;
+  const n = axes.length;
+  const color = rec.inspection.colorHex || '#e6c27a';
+  const at = (i, scale) => {
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    return [cx + Math.cos(ang) * rx * scale, cy + Math.sin(ang) * ry * scale];
+  };
+  g.strokeStyle = 'rgba(246, 240, 228, 0.28)';
+  g.lineWidth = measured ? dpr : 1;
+  for (const ring of [0.25, 0.5, 0.75, 1]) {
+    g.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const [x, y] = at(i % n, ring);
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  g.beginPath();
+  for (let i = 0; i < n; i++) {
+    const [x, y] = at(i, 1);
+    g.moveTo(cx, cy);
+    g.lineTo(x, y);
+  }
+  g.stroke();
+  const earlier = syncProfileCompare(rec, profile.history);
+  const stroke = measured ? dpr : 1;
+  if (earlier) traceRadar(g, at, earlier.values, 'rgba(246, 240, 228, 0.14)', 'rgba(246, 240, 228, 0.45)', 1.5 * stroke);
+  traceRadar(
+    g,
+    at,
+    axes.map((axis) => axis.value),
+    color.length === 7 ? `${color}55` : 'rgba(230, 194, 122, 0.35)',
+    color,
+    2 * stroke,
+  );
+  g.fillStyle = '#f6f0e4';
+  g.font = `${Math.max(12, Math.round(13 * stroke))}px Georgia, serif`;
+  axes.forEach((axis, i) => {
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    const [x, y] = at(i, 1.18);
+    g.textAlign = Math.cos(ang) > 0.35 ? 'left' : Math.cos(ang) < -0.35 ? 'right' : 'center';
+    g.textBaseline = Math.sin(ang) > 0.35 ? 'top' : Math.sin(ang) < -0.35 ? 'bottom' : 'middle';
+    g.fillText(axis.label, x, y);
+  });
+  if (rec.profileNote) {
+    const compared = earlier ? ` Faded shape is hand ${earlier.handNumber}. Solid shape is now.` : '';
+    rec.profileNote.textContent = `${profile.note || ''}${compared}`;
+  }
+}
+
+function paintHistory(rec) {
+  if (!rec.history) return;
+  const inspection = rec.inspection || {};
+  paintRadar(rec);
+  if (rec.historyCompare) rec.historyCompare.textContent = compareText(inspection);
+  const recent = Array.isArray(inspection.learning?.recent) ? inspection.learning.recent : [];
+  if (!recent.length) {
+    rec.history.replaceChildren(historyItem('Nothing has been learned yet.'));
+    return;
+  }
+  const rows = recent.slice().reverse().map((record) => {
+    const item = document.createElement('li');
+    for (const line of learnedLines({ learning: { last: record } })) {
+      const fact = document.createElement('p');
+      fact.textContent = line;
+      item.append(fact);
+    }
+    const facts = narrationFacts(record);
+    const key = facts.length ? narrationKey(inspection, record, facts) : '';
+    const sentence = key ? rec.narrations?.get(key) : '';
+    const error = key && rec.narrationError?.key === key ? rec.narrationError.text : '';
+    if (sentence || error) {
+      const said = document.createElement('p');
+      said.className = 'fly-brain-adapt';
+      said.textContent = sentence || error;
+      item.append(said);
+    }
+    return item;
+  });
+  rec.history.replaceChildren(...rows);
+}
+
+function requestNarration(rec) {
+  const inspection = rec.inspection || {};
+  const record = inspection.learning?.last;
+  const facts = narrationFacts(record);
+  if (!facts.length) {
+    rec.adapt.textContent = '';
+    rec.narrateKey = '';
+    return;
+  }
+  const key = narrationKey(inspection, record, facts);
+  const known = rec.narrations?.get(key);
+  if (known) {
+    rec.narrateKey = key;
+    rec.adapt.textContent = known;
+    return;
+  }
+  if (key === rec.narrateKey) return;
+  rec.narrateKey = key;
+  const token = (rec.narrateToken || 0) + 1;
+  rec.narrateToken = token;
+  fetch(NARRATE_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ facts }),
+  }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (token !== rec.narrateToken) return;
+    if (!response.ok) {
+      const message = typeof data.error === 'string' && data.error ? data.error : `Narration failed (${response.status}).`;
+      rec.narrationError = { key, text: message };
+      rec.adapt.textContent = message;
+      paintHistory(rec);
+      return;
+    }
+    const text = typeof data.text === 'string' ? data.text.trim() : '';
+    if (!text) {
+      rec.adapt.textContent = 'Plain-language summary unavailable.';
+      return;
+    }
+    rec.narrations.set(key, text);
+    rec.adapt.textContent = text;
+    paintHistory(rec);
+  }).catch((error) => {
+    if (token !== rec.narrateToken) return;
+    const message = error?.message ? String(error.message) : 'Plain-language summary unavailable.';
+    rec.narrationError = { key, text: message };
+    rec.adapt.textContent = message;
+    paintHistory(rec);
+  });
 }
 
 function activityKey(inspection) {
@@ -931,10 +1791,14 @@ function selectTab(rec, tab) {
   rec.tab = tab;
   rec.circuitPane.hidden = tab !== 'circuit';
   rec.brainPane.hidden = tab !== 'brain';
+  rec.learnPane.hidden = tab !== 'learning';
   rec.tabCircuit.setAttribute('aria-selected', tab === 'circuit' ? 'true' : 'false');
   rec.tabBrain.setAttribute('aria-selected', tab === 'brain' ? 'true' : 'false');
+  rec.tabLearn.setAttribute('aria-selected', tab === 'learning' ? 'true' : 'false');
   if (tab === 'brain' && !rec.root.hidden) startLoop(rec);
   else stopLoop(rec);
+  if (tab === 'circuit') requestAnimationFrame(() => renderCircuit(rec));
+  if (tab === 'learning') requestAnimationFrame(() => paintRadar(rec));
 }
 
 function startLoop(rec) {
@@ -970,7 +1834,9 @@ export function createBrainPanel(container) {
 
   const head = document.createElement('div');
   head.className = 'fly-brain-head';
+  const badge = badgeOf('', '#e6c27a');
   const titles = document.createElement('div');
+  titles.className = 'fly-brain-who';
   const style = document.createElement('p');
   style.className = 'fly-brain-kicker';
   const name = document.createElement('h2');
@@ -980,7 +1846,7 @@ export function createBrainPanel(container) {
   close.className = 'fly-brain-close';
   close.setAttribute('aria-label', 'Close');
   close.textContent = '×';
-  head.append(titles, close);
+  head.append(badge, titles, close);
 
   const action = document.createElement('p');
   action.className = 'fly-brain-action';
@@ -1000,7 +1866,12 @@ export function createBrainPanel(container) {
   tabBrain.textContent = 'Brain';
   tabBrain.setAttribute('role', 'tab');
   tabBrain.setAttribute('aria-selected', 'false');
-  tabs.append(tabCircuit, tabBrain);
+  const tabLearn = document.createElement('button');
+  tabLearn.type = 'button';
+  tabLearn.textContent = 'Learning';
+  tabLearn.setAttribute('role', 'tab');
+  tabLearn.setAttribute('aria-selected', 'false');
+  tabs.append(tabCircuit, tabBrain, tabLearn);
 
   const stage = document.createElement('div');
   stage.className = 'fly-brain-stage';
@@ -1011,7 +1882,8 @@ export function createBrainPanel(container) {
   circuitEmpty.hidden = true;
   circuitEmpty.textContent = 'No circuit on this fly.';
   const board = svg('svg', {
-    viewBox: '0 0 460 500',
+    viewBox: '0 0 1200 320',
+    preserveAspectRatio: 'none',
     class: 'fly-brain-circuit',
     role: 'img',
   });
@@ -1020,6 +1892,8 @@ export function createBrainPanel(container) {
   const brainPane = document.createElement('div');
   brainPane.className = 'fly-brain-pane fly-brain-gl';
   brainPane.hidden = true;
+  const viewHost = document.createElement('div');
+  viewHost.className = 'fly-brain-view';
   const reset = document.createElement('button');
   reset.type = 'button';
   reset.className = 'fly-brain-reset';
@@ -1034,15 +1908,90 @@ export function createBrainPanel(container) {
   for (const layer of LAYERS) {
     const item = document.createElement('span');
     const swatch = document.createElement('i');
-    const hot = BRAIN_HOT[layer];
+    const hot = REGION[layer];
     swatch.style.background = `rgb(${hot[0]}, ${hot[1]}, ${hot[2]})`;
     item.append(swatch, document.createTextNode(LAYER_TITLE[layer]));
     legend.appendChild(item);
   }
   const links = document.createElement('span');
   legend.appendChild(links);
-  brainPane.append(reset, caption, legend);
-  stage.append(circuitPane, brainPane);
+  viewHost.append(reset, caption, legend);
+  const live = document.createElement('aside');
+  live.className = 'fly-brain-live';
+  const thoughtKicker = document.createElement('p');
+  thoughtKicker.className = 'fly-brain-kicker live';
+  thoughtKicker.textContent = 'Right now';
+  const thought = document.createElement('p');
+  thought.className = 'fly-brain-thought';
+  thought.textContent = 'Nothing to weigh yet.';
+  const hand = document.createElement('p');
+  hand.className = 'fly-brain-part';
+  const why = document.createElement('p');
+  why.className = 'fly-brain-part';
+  const executed = document.createElement('p');
+  executed.className = 'fly-brain-part';
+  const activations = document.createElement('p');
+  activations.className = 'fly-brain-part';
+  const compareKicker = document.createElement('p');
+  compareKicker.className = 'fly-brain-kicker live';
+  compareKicker.textContent = 'Frozen copy';
+  const compare = document.createElement('p');
+  compare.className = 'fly-brain-part';
+  compare.textContent = 'The frozen copy has not been scored yet.';
+  const part = document.createElement('p');
+  part.className = 'fly-brain-part';
+  part.textContent = 'No region is flaring. The colors are the resting brain.';
+  const path = document.createElement('p');
+  path.className = 'fly-brain-path';
+  const growthKicker = document.createElement('p');
+  growthKicker.className = 'fly-brain-kicker live';
+  growthKicker.textContent = 'This hand';
+  const growth = document.createElement('ul');
+  growth.className = 'fly-brain-growth';
+  const waiting = document.createElement('li');
+  waiting.textContent = 'Nothing has been learned yet.';
+  growth.append(waiting);
+  const adapt = document.createElement('p');
+  adapt.className = 'fly-brain-adapt';
+  live.append(thoughtKicker, thought, hand, why, executed, activations, part, path, compareKicker, compare, growthKicker, growth, adapt);
+  brainPane.append(viewHost, live);
+  const learnPane = document.createElement('div');
+  learnPane.className = 'fly-brain-pane fly-brain-learn-pane';
+  learnPane.hidden = true;
+  const profileKicker = document.createElement('p');
+  profileKicker.className = 'fly-brain-kicker live';
+  profileKicker.textContent = 'Strategy profile';
+  const compareRow = document.createElement('label');
+  compareRow.className = 'fly-brain-part';
+  compareRow.textContent = 'Compare with ';
+  const comparePick = document.createElement('select');
+  comparePick.className = 'fly-brain-compare';
+  const onlyNow = document.createElement('option');
+  onlyNow.value = '';
+  onlyNow.textContent = 'Current only';
+  comparePick.append(onlyNow);
+  compareRow.append(comparePick);
+  const radar = document.createElement('canvas');
+  radar.className = 'fly-brain-radar';
+  radar.width = 960;
+  radar.height = 280;
+  const profileNote = document.createElement('p');
+  profileNote.className = 'fly-brain-part';
+  profileNote.textContent = 'Model parameters until this fly has played 3 hands.';
+  const historyKicker = document.createElement('p');
+  historyKicker.className = 'fly-brain-kicker live';
+  historyKicker.textContent = 'Frozen copy';
+  const historyCompare = document.createElement('p');
+  historyCompare.className = 'fly-brain-part';
+  historyCompare.textContent = 'The frozen copy has not been scored yet.';
+  const handsKicker = document.createElement('p');
+  handsKicker.className = 'fly-brain-kicker live';
+  handsKicker.textContent = 'Hands';
+  const history = document.createElement('ol');
+  history.className = 'fly-brain-history';
+  history.append(historyItem('Nothing has been learned yet.'));
+  learnPane.append(profileKicker, compareRow, radar, profileNote, historyKicker, historyCompare, handsKicker, history);
+  stage.append(circuitPane, brainPane, learnPane);
 
   const learn = document.createElement('p');
   learn.className = 'fly-brain-learn';
@@ -1052,6 +2001,7 @@ export function createBrainPanel(container) {
 
   const rec = {
     root,
+    badge,
     style,
     name,
     action,
@@ -1059,13 +2009,34 @@ export function createBrainPanel(container) {
     learn,
     tabCircuit,
     tabBrain,
+    tabLearn,
     circuitPane,
     circuitEmpty,
     svg: board,
     brainPane,
+    viewHost,
     step,
     count,
     links,
+    thought,
+    hand,
+    why,
+    executed,
+    activations,
+    compare,
+    part,
+    path,
+    learnPane,
+    historyCompare,
+    history,
+    radar,
+    comparePick,
+    profileNote,
+    narrations: new Map(),
+    growth,
+    adapt,
+    narrateKey: '',
+    narrateToken: 0,
     inspection: null,
     tab: 'circuit',
     raf: 0,
@@ -1073,19 +2044,29 @@ export function createBrainPanel(container) {
     orbit: { ...DEFAULT_ORBIT },
     view: null,
     drag: null,
+    hideTimer: 0,
   };
   panels.set(root, rec);
 
   close.addEventListener('click', () => hideBrain(root));
   tabCircuit.addEventListener('click', () => selectTab(rec, 'circuit'));
   tabBrain.addEventListener('click', () => selectTab(rec, 'brain'));
+  tabLearn.addEventListener('click', () => selectTab(rec, 'learning'));
+  comparePick.addEventListener('change', () => paintRadar(rec));
+  if (typeof ResizeObserver === 'function') {
+    const watcher = new ResizeObserver(() => {
+      renderCircuit(rec);
+      if (rec.tab === 'learning') paintRadar(rec);
+    });
+    watcher.observe(stage);
+  }
   reset.addEventListener('click', () => resetOrbit(rec));
-  brainPane.addEventListener('pointerdown', (event) => {
+  viewHost.addEventListener('pointerdown', (event) => {
     if (event.target === reset) return;
     rec.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    brainPane.setPointerCapture(event.pointerId);
+    viewHost.setPointerCapture(event.pointerId);
   });
-  brainPane.addEventListener('pointermove', (event) => {
+  viewHost.addEventListener('pointermove', (event) => {
     if (!rec.drag || rec.drag.id !== event.pointerId) return;
     rec.orbit.azimuth -= (event.clientX - rec.drag.x) * 0.007;
     rec.orbit.polar = Math.max(0.18, Math.min(Math.PI - 0.18, rec.orbit.polar + (event.clientY - rec.drag.y) * 0.005));
@@ -1093,12 +2074,12 @@ export function createBrainPanel(container) {
     rec.drag.y = event.clientY;
   });
   const endDrag = () => { rec.drag = null; };
-  brainPane.addEventListener('pointerup', endDrag);
-  brainPane.addEventListener('pointercancel', endDrag);
-  brainPane.addEventListener('wheel', (event) => {
+  viewHost.addEventListener('pointerup', endDrag);
+  viewHost.addEventListener('pointercancel', endDrag);
+  viewHost.addEventListener('wheel', (event) => {
     if (rec.tab !== 'brain') return;
     event.preventDefault();
-    rec.orbit.radius = Math.max(1.7, Math.min(8, rec.orbit.radius * Math.exp(event.deltaY * 0.0011)));
+    rec.orbit.radius = Math.max(2.4, Math.min(10, rec.orbit.radius * Math.exp(event.deltaY * 0.0011)));
   }, { passive: false });
 
   return root;
@@ -1113,7 +2094,15 @@ export function showBrain(panel, inspection) {
     rec.brainT0 = performance.now();
   }
   rec.inspection = inspection || null;
+  clearTimeout(rec.hideTimer);
+  const closed = rec.root.hidden || !rec.root.classList.contains('is-open');
   rec.root.hidden = false;
+  if (closed) {
+    rec.root.classList.remove('is-open');
+    requestAnimationFrame(() => {
+      if (!rec.root.hidden) rec.root.classList.add('is-open');
+    });
+  }
   paintChrome(rec);
   renderCircuit(rec);
   if (rec.tab === 'brain') startLoop(rec);
@@ -1121,8 +2110,13 @@ export function showBrain(panel, inspection) {
 
 export function hideBrain(panel) {
   const rec = panels.get(panel);
-  if (!rec) return;
-  rec.root.hidden = true;
-  stopLoop(rec);
-  disposeView(rec);
+  if (!rec || rec.root.hidden) return;
+  rec.root.classList.remove('is-open');
+  clearTimeout(rec.hideTimer);
+  rec.hideTimer = setTimeout(() => {
+    if (rec.root.classList.contains('is-open')) return;
+    rec.root.hidden = true;
+    stopLoop(rec);
+    disposeView(rec);
+  }, 300);
 }

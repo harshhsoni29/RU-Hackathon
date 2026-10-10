@@ -194,15 +194,20 @@ body::after {
   right: 12px;
   bottom: 12px;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px;
   align-items: center;
   justify-content: space-between;
+  height: 76px;
+  min-height: 76px;
+  max-height: 76px;
+  box-sizing: border-box;
   padding: 8px;
   border-radius: 16px;
+  overflow: hidden;
 }
 
-.controls { flex-wrap: wrap; }
+.controls { flex: 0 0 auto; flex-wrap: nowrap; }
 button, .speed {
   border-radius: 999px;
   color: var(--ink);
@@ -228,16 +233,21 @@ button.ghost { background: transparent; }
 
 .speed input { width: 88px; accent-color: var(--brass); vertical-align: middle; }
 
-.stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stats { display: flex; flex-wrap: nowrap; gap: 6px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .plate {
   text-align: left;
-  min-width: 108px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 58px;
+  box-sizing: border-box;
   padding: 6px 10px 6px 12px;
   border-radius: 12px;
   border-left: 4px solid var(--fly, var(--brass));
   box-shadow: none;
+  overflow: hidden;
 }
-.plate .who { display: block; font-weight: 700; }
+.plate .who, .plate .meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plate .who { font-weight: 700; }
 .plate .chips { font-variant-numeric: tabular-nums; color: var(--brass); }
 .plate.acting { outline: 1px solid var(--fly, var(--brass)); }
 .plate.picked { background: #4a2c1c; }

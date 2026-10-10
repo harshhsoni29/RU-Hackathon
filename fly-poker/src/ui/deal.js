@@ -29,10 +29,17 @@ const HOLE_STAGGER = 0.1;
 const HOLE_TIME = 0.78;
 const BOARD_STAGGER = 0.42;
 const BOARD_TIME = 0.96;
-const BOARD_GAP = 0.3;
+const BOARD_GAP = 0.72;
+const BOARD_SCALE = 1.7;
+const HOLE_SCALE = 1.35;
+const BET_HOLE_SCALE = 2.2;
+/** Standing hole cards sit this far above the board anchor so the tilted bottom clears the felt. */
+const HOLE_STAND = 0.3;
+/** Hole-card centers stay this far inside the felt edge, clear of the rail. */
+const HOLE_RIM_INSET = 0.85;
 
 const cardGeo = new THREE.BoxGeometry(CARD_W, CARD_H, CARD_D);
-const sideMat = new THREE.MeshStandardMaterial({ color: 0xf3ead8, roughness: 0.62 });
+const sideMat = new THREE.MeshLambertMaterial({ color: 0xf3ead8 });
 
 const faceCache = new Map();
 let backMap = null;
@@ -47,6 +54,11 @@ const fallbackUp = new THREE.Vector3(0, 1, 0);
 const raf = globalThis.requestAnimationFrame
   ? (fn) => globalThis.requestAnimationFrame(fn)
   : (fn) => setTimeout(() => fn(performance.now()), 16);
+
+function commit(object) {
+  object.matrixAutoUpdate = false;
+  object.updateMatrix();
+}
 
 function smooth(t) {
   const x = Math.max(0, Math.min(1, t));
@@ -92,20 +104,19 @@ function backTexture(deps) {
 }
 
 function makeCard(deps, rank, suit) {
-  const face = new THREE.MeshStandardMaterial({
+  const face = new THREE.MeshLambertMaterial({
     color: 0xffffff,
-    roughness: 0.55,
     map: textureOf(deps, rank, suit),
   });
-  const back = new THREE.MeshStandardMaterial({
+  const back = new THREE.MeshLambertMaterial({
     color: 0xffffff,
-    roughness: 0.55,
     map: backTexture(deps),
   });
   // Box faces are +X, -X, +Y, -Y, +Z, -Z. Rank sits on +Z only.
   const mesh = new THREE.Mesh(cardGeo, [sideMat, sideMat, sideMat, sideMat, face, back]);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.matrixAutoUpdate = false;
   return mesh;
 }
 
@@ -144,8 +155,8 @@ function boardAnchor(layer) {
 function feltRadii(layer) {
   const table = layer.deps && layer.deps.table;
   return {
-    rx: (layer.deps && layer.deps.feltRx) || (table && table.feltRx) || 1.92,
-    rz: (layer.deps && layer.deps.feltRz) || (table && table.feltRz) || 0.96,
+    rx: (layer.deps && layer.deps.feltRx) || (table && table.feltRx) || 4.9,
+    rz: (layer.deps && layer.deps.feltRz) || (table && table.feltRz) || 3.6,
   };
 }
 
@@ -198,23 +209,24 @@ function buildShoe(layer) {
   const board = boardAnchor(layer);
   const shoe = new THREE.Group();
   shoe.name = 'deck';
-  const back = new THREE.MeshStandardMaterial({
+  const back = new THREE.MeshLambertMaterial({
     color: 0xffffff,
-    roughness: 0.55,
     map: backTexture(layer.deps),
   });
-  const face = new THREE.MeshStandardMaterial({ color: 0xf3ead8, roughness: 0.62 });
+  const face = new THREE.MeshLambertMaterial({ color: 0xf3ead8 });
   for (let i = 0; i < 10; i++) {
     const mesh = new THREE.Mesh(cardGeo, [sideMat, sideMat, sideMat, sideMat, face, back]);
     mesh.rotation.x = Math.PI / 2;
     mesh.position.y = CARD_D * (i + 0.5);
     mesh.rotation.z = (i - 5) * 0.012;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    commit(mesh);
     shoe.add(mesh);
   }
   shoe.position.set(spot.x, spot.y, spot.z);
   shoe.rotation.y = Math.atan2(board.x - spot.x, board.z - spot.z);
+  commit(shoe);
   layer.group.add(shoe);
   layer.shoe = shoe;
 }
@@ -223,8 +235,6 @@ function holeSpot(layer, flyId, index) {
   const fly = flyAnchor(layer, flyId);
   const center = boardAnchor(layer);
   const side = index === 0 ? -1 : 1;
-  const seat = seatRecord(layer, flyId);
-  const parked = seat && readVec(seat.cardAnchor);
   let dx = fly.x - center.x;
   let dz = fly.z - center.z;
   let len = Math.hypot(dx, dz);
@@ -235,26 +245,18 @@ function holeSpot(layer, flyId, index) {
   }
   const ux = dx / len;
   const uz = dz / len;
-  if (parked) {
-    return {
-      x: parked.x + (-uz) * side * 0.1,
-      z: parked.z + ux * side * 0.1,
-      surface: parked.y,
-      flyX: fly.x,
-      flyZ: fly.z,
-      fan: index === 0 ? -0.14 : 0.14,
-    };
-  }
-  // In front of the fly and outside the head when cardAnchor is missing.
-  const gap = Math.min(1.2, Math.max(0.7, len - 0.2));
-  const dist = len - gap;
+  const { rx, rz } = feltRadii(layer);
+  const feltDist = 1 / Math.hypot(ux / rx, uz / rz);
+  // Near the fly, inside the rail, and outside that fly's chip columns.
+  const dist = Math.max(1.1, feltDist - HOLE_RIM_INSET);
+  const spread = BET_HOLE_SCALE * CARD_W * 0.62;
   return {
-    x: center.x + ux * dist + (-uz) * side * 0.1,
-    z: center.z + uz * dist + ux * side * 0.1,
+    x: center.x + ux * dist + (-uz) * side * spread,
+    z: center.z + uz * dist + ux * side * spread,
     surface: center.y,
     flyX: fly.x,
     flyZ: fly.z,
-    fan: index === 0 ? -0.14 : 0.14,
+    fan: index === 0 ? -0.16 : 0.16,
   };
 }
 
@@ -262,7 +264,7 @@ function boardSpot(layer, index) {
   const anchor = boardAnchor(layer);
   return {
     x: anchor.x + (index - 2) * BOARD_GAP,
-    z: anchor.z + 0.02,
+    z: anchor.z,
     surface: anchor.y,
   };
 }
@@ -310,10 +312,21 @@ function aimHole(mesh, toFlyX, toFlyZ, reveal, fan) {
   if (fan) mesh.rotateZ(fan);
 }
 
-/** Board flip: face-down, then +Z sweeps up through the table so the rank ends on top. */
+/**
+ * Board flip. flip 0 is face-down. flip 1 leaves the rank facing up and
+ * leaned toward the rail camera (+Z) so the center row is readable.
+ */
 function aimBoard(mesh, flip) {
-  const angle = -Math.PI / 2 + Math.PI * flip;
-  axisZ.set(0, Math.sin(angle), Math.cos(angle));
+  if (flip >= 0.98) {
+    mesh.quaternion.copy(faceUpQuaternion());
+    return;
+  }
+  const lean = 0.62 * flip;
+  const sweep = Math.sin(-Math.PI / 2 + Math.PI * flip);
+  const yy = sweep * Math.cos(lean);
+  const zz = Math.sin(lean);
+  const flen = Math.hypot(yy, zz) || 1;
+  axisZ.set(0, yy / flen, zz / flen);
   axisX.set(1, 0, 0);
   axisY.crossVectors(axisZ, axisX).normalize();
   basis.makeBasis(axisX, axisY, axisZ);
@@ -325,17 +338,16 @@ function startPump(layer) {
   layer.pumping = true;
   const step = (now) => {
     const jobs = layer.jobs;
-    const finished = [];
     for (let i = jobs.length - 1; i >= 0; i--) {
       const job = jobs[i];
       const u = now < job.t0 ? 0 : Math.min(1, (now - job.t0) / job.duration);
       job.apply(u);
-      if (now >= job.t0 + job.duration) {
-        jobs.splice(i, 1);
-        finished.push(job);
-      }
+      if (now < job.t0 + job.duration) continue;
+      const last = jobs.length - 1;
+      jobs[i] = jobs[last];
+      jobs.pop();
+      job.done();
     }
-    for (const job of finished) job.done();
     if (jobs.length) layer.raf = raf(step);
     else layer.pumping = false;
   };
@@ -413,6 +425,7 @@ function flyHole(layer, seat, index, card, delay, onDone) {
   const spot = holeSpot(layer, seat.id, index);
   const deck = deckPoint(layer);
   const mesh = makeCard(layer.deps, card.rank, card.suit);
+  mesh.scale.set(HOLE_SCALE, HOLE_SCALE, 1);
   mesh.userData = { kind: 'hole', flyId: seat.id, index, code: card.rank + card.suit };
   layer.group.add(mesh);
   layer.holes.set(`${seat.id}:${index}`, mesh);
@@ -435,9 +448,10 @@ function flyHole(layer, seat, index, card, delay, onDone) {
     const x = deck.x + (spot.x - deck.x) * along;
     const z = deck.z + (spot.z - deck.z) * along;
     const flatY = spot.surface + 0.012 + peel * (1 - along);
-    const standY = spot.surface + 0.2;
+    const standY = spot.surface + HOLE_STAND;
     mesh.position.set(x, flatY + (standY - flatY) * reveal + arc, z);
     aimHole(mesh, spot.flyX - x, spot.flyZ - z, reveal, spot.fan * Math.max(reveal, 0.25));
+    mesh.updateMatrix();
   }, onDone);
 }
 
@@ -445,10 +459,12 @@ function flyBoard(layer, card, index, delay, onDone) {
   const spot = boardSpot(layer, index);
   const deck = deckPoint(layer);
   const mesh = makeCard(layer.deps, card.rank, card.suit);
+  mesh.scale.set(BOARD_SCALE, BOARD_SCALE, 1);
   mesh.userData = { kind: 'board', index, code: card.rank + card.suit };
   layer.group.add(mesh);
   layer.board[index] = mesh;
-  const peel = (index % 5) * 0.003;
+  const peel = (index % 5) * 0.004;
+  const restY = spot.surface + 0.045;
   return track(layer, 'board', delay, BOARD_TIME, (u) => {
     const travel = 0.58;
     let along;
@@ -457,16 +473,18 @@ function flyBoard(layer, card, index, delay, onDone) {
     if (u < travel) {
       along = smooth(u / travel);
       flip = 0;
-      arc = Math.sin(Math.PI * along) * 0.36;
+      arc = Math.sin(Math.PI * along) * 0.42;
     } else {
       along = 1;
       flip = smooth((u - travel) / (1 - travel));
-      arc = Math.sin(Math.PI * flip) * 0.16;
+      arc = Math.sin(Math.PI * flip) * 0.18;
     }
     const x = deck.x + (spot.x - deck.x) * along;
     const z = deck.z + (spot.z - deck.z) * along;
-    mesh.position.set(x, spot.surface + 0.012 + peel * (1 - along) + arc, z);
+    const y = spot.surface + 0.04 + (restY - spot.surface - 0.04) * flip + peel * (1 - along) + arc;
+    mesh.position.set(x, y, z);
     aimBoard(mesh, flip);
+    mesh.updateMatrix();
   }, onDone);
 }
 
@@ -484,6 +502,7 @@ export function createDealLayer(scene, deps = {}) {
   if (!scene || typeof scene.add !== 'function') throw new Error('createDealLayer needs a THREE.Scene');
   const group = new THREE.Group();
   group.name = 'deal';
+  group.matrixAutoUpdate = false;
   scene.add(group);
   const layer = {
     scene,
@@ -545,6 +564,17 @@ export function playDealAnimation(layer, publicState) {
     boardDelay += BOARD_STAGGER;
   }
   layer.boardCodes = nextBoard.slice();
+  const flyingBoard = new Set(tasks.filter((task) => task.kind === 'board').map((task) => task.index));
+  for (let i = 0; i < layer.board.length; i++) {
+    if (flyingBoard.has(i)) continue;
+    const mesh = layer.board[i];
+    if (!mesh) continue;
+    const spot = boardSpot(layer, i);
+    mesh.position.set(spot.x, spot.surface + 0.045, spot.z);
+    mesh.scale.set(BOARD_SCALE, BOARD_SCALE, 1);
+    mesh.quaternion.copy(faceUpQuaternion());
+    mesh.updateMatrix();
+  }
 
   refreshTint(layer, state);
   if (!tasks.length) return Promise.resolve();
@@ -586,13 +616,17 @@ export function setCardView(layer, mode) {
     layer.holes.forEach((mesh) => {
       if (!mesh) return;
       if (top) {
-        mesh.position.y = felt + 0.02 + (mesh.userData.index || 0) * 0.004;
+        mesh.scale.set(BET_HOLE_SCALE, BET_HOLE_SCALE, 1);
+        mesh.position.y = felt + 0.03 + (mesh.userData.index || 0) * 0.006;
         mesh.quaternion.copy(quat);
+        mesh.updateMatrix();
         return;
       }
+      mesh.scale.set(HOLE_SCALE, HOLE_SCALE, 1);
       const spot = holeSpot(layer, mesh.userData.flyId, mesh.userData.index || 0);
-      mesh.position.set(spot.x, spot.surface + 0.2, spot.z);
+      mesh.position.set(spot.x, spot.surface + HOLE_STAND, spot.z);
       aimHole(mesh, spot.flyX - spot.x, spot.flyZ - spot.z, 1, spot.fan);
+      mesh.updateMatrix();
     });
   }
   const board = layer.board || [];
@@ -602,10 +636,13 @@ export function setCardView(layer, mode) {
     if (top) {
       mesh.position.y = felt + 0.02 + i * 0.003;
       mesh.quaternion.copy(quat);
+      mesh.updateMatrix();
       continue;
     }
     const spot = boardSpot(layer, mesh.userData.index ?? i);
-    mesh.position.set(spot.x, spot.surface + 0.012 + (i % 5) * 0.003, spot.z);
-    aimBoard(mesh, 1);
+    mesh.position.set(spot.x, spot.surface + 0.045 + (i % 5) * 0.003, spot.z);
+    mesh.scale.set(BOARD_SCALE, BOARD_SCALE, 1);
+    mesh.quaternion.copy(quat);
+    mesh.updateMatrix();
   }
 }

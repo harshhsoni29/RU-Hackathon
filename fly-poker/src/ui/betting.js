@@ -161,6 +161,17 @@ export function initBetting(options = {}) {
   // ---------------------------------------------------------------- DOM
   const root = el('aside', 'fp-slip');
   root.setAttribute('aria-label', 'Betting slip');
+
+  const tab = el('button', 'fp-slip-tab');
+  tab.type = 'button';
+  tab.setAttribute('aria-controls', 'fp-slip-panel');
+  const arrow = el('span', 'fp-slip-arrow');
+  arrow.setAttribute('aria-hidden', 'true');
+  tab.append(arrow);
+
+  const panel = el('div', 'fp-slip-panel');
+  panel.id = 'fp-slip-panel';
+
   const head = el('header', 'fp-head');
   const title = el('h2', 'fp-title', 'Betting slip');
   const status = el('span', 'fp-status');
@@ -215,7 +226,7 @@ export function initBetting(options = {}) {
   const resultEl = el('p', 'fp-result');
   const mineEl = el('p', 'fp-mybets');
 
-  root.append(head, wallet, seatList, stakeRow, betBtn, msgEl, resultEl, mineEl);
+  panel.append(head, wallet, seatList, stakeRow, betBtn, msgEl, resultEl, mineEl);
 
   // Dev drawer: lets you drive a round from the browser, no Python engine needed.
   // The engine key in a browser is only acceptable for local testing.
@@ -240,9 +251,21 @@ export function initBetting(options = {}) {
       mk('Cancel', () => engine('/rounds/' + state.round.id + '/cancel')),
       mk('Add $100', async () => { try { await addFunds(10000); render(); } catch (e) { say(e.message, 'err'); } }),
     );
-    root.append(dev);
+    panel.append(dev);
   }
 
+  let slipOpen = false;
+  function setSlipOpen(open) {
+    slipOpen = open;
+    root.classList.toggle('is-open', open);
+    tab.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tab.setAttribute('aria-label', open ? 'Hide betting slip' : 'Show betting slip');
+    panel.toggleAttribute('inert', !open);
+  }
+  tab.addEventListener('click', () => setSlipOpen(!slipOpen));
+  setSlipOpen(false);
+
+  root.append(tab, panel);
   document.body.append(root);
 
   // ---------------------------------------------------------------- render

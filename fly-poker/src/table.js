@@ -21,7 +21,17 @@ const NEXT_STREET = { preflop: 'flop', flop: 'turn', turn: 'river' };
 const STREET_CARDS = { flop: 3, turn: 1, river: 1 };
 
 function emptyStats() {
-  return { handsPlayed: 0, handsWon: 0, vpipHands: 0, pfrHands: 0, betsRaises: 0, calls: 0, netChips: 0 };
+  return {
+    handsPlayed: 0,
+    handsWon: 0,
+    vpipHands: 0,
+    pfrHands: 0,
+    betsRaises: 0,
+    calls: 0,
+    folds: 0,
+    checks: 0,
+    netChips: 0,
+  };
 }
 
 function nextIndex(from, length, pred) {
@@ -171,6 +181,8 @@ function publicStats(fly) {
     aggressionFactor: fly.stats.calls ? fly.stats.betsRaises / fly.stats.calls : fly.stats.betsRaises,
     betsRaises: fly.stats.betsRaises,
     calls: fly.stats.calls,
+    folds: fly.stats.folds || 0,
+    checks: fly.stats.checks || 0,
     netChips: fly.stats.netChips,
   };
 }
@@ -183,7 +195,9 @@ export function createTable(config = {}) {
   if (!(smallBlind > 0) || !(bigBlind > smallBlind)) throw new Error('blinds must satisfy 0 < small blind < big blind');
   if (startingStack < bigBlind) throw new Error('starting stack must cover the big blind');
   const loaded = resolveStyles(config.styles);
-  const flies = FLIES.map((meta, seat) => ({
+  const flies = FLIES.map((meta, seat) => {
+    const brain = createBrain();
+    return {
     id: meta.id,
     name: meta.name,
     style: meta.style,
@@ -193,14 +207,25 @@ export function createTable(config = {}) {
     stack: startingStack,
     base: loaded.styles[meta.id],
     params: { ...loaded.styles[meta.id] },
-    brain: createBrain(),
+    brain,
+    frozenBrain: { edges: brain.edges.map((edge) => ({ ...edge })) },
+    frozenParams: { ...loaded.styles[meta.id] },
+    policyCompare: {
+      decisions: 0,
+      disagreements: 0,
+      lastLive: null,
+      lastFrozen: null,
+      since: null,
+    },
     model: Object.fromEntries(FLIES.filter((other) => other.id !== meta.id).map((other) => [other.id, emptyModel()])),
     stats: emptyStats(),
     lastDecision: null,
     lastActivity: null,
     learningLog: [],
+    profileHistory: [],
     pending: [],
-  }));
+    };
+  });
   return {
     seed,
     rng: makeRng(seed),
@@ -291,6 +316,21 @@ export function dealHand(table) {
   return table;
 }
 
+function notePolicyMove(fly, record, handNumber) {
+  if (!fly.policyCompare || fly.policyCompare.since || !record) return;
+  const moved = (record.deltas || []).some((row) => {
+    const parameter = String(row.parameter || '');
+    return parameter.startsWith('gain:') || parameter === 'aggression' || parameter === 'bluff' || parameter === 'foldToPressure';
+  });
+  if (!moved) return;
+  fly.policyCompare.since = {
+    handNumber,
+    netChips: fly.stats.netChips,
+    handsPlayed: fly.stats.handsPlayed,
+    handsWon: fly.stats.handsWon,
+  };
+}
+
 function blankResult(table) {
   return {
     handNumber: table.handNumber,
@@ -332,6 +372,11 @@ export function step(table) {
   shown.allIn = applied.allIn;
   fly.lastDecision = shown;
   fly.lastActivity = decision.activity.slice();
+  const frozen = decide({ ...buildContext(table, seat, legal), brain: fly.frozenBrain, params: fly.frozenParams });
+  fly.policyCompare.decisions += 1;
+  if (frozen.action !== applied.action) fly.policyCompare.disagreements += 1;
+  fly.policyCompare.lastLive = applied.action;
+  fly.policyCompare.lastFrozen = frozen.action;
   if (applied.action === 'bet' || applied.action === 'raise') hand.lastAggressor = seat;
   const event = {
     seq: hand.log.length,
@@ -413,7 +458,7 @@ function finishHand(table, result, showdown) {
     const foldEvent = hand.log.find((ev) => ev.seat === i && ev.action === 'fold');
     const foldSeq = foldEvent ? foldEvent.seq : Infinity;
     const visible = hand.log.filter((ev) => ev.seq <= foldSeq);
-    learnFromHand(fly, {
+    const learned = learnFromHand(fly, {
       chipsDelta,
       bb: table.bigBlind,
       events: visible,
@@ -431,11 +476,15 @@ function finishHand(table, result, showdown) {
       if (ev.seat !== i) continue;
       if (ev.action === 'bet' || ev.action === 'raise') fly.stats.betsRaises += 1;
       if (ev.action === 'call') fly.stats.calls += 1;
+      if (ev.action === 'fold') fly.stats.folds += 1;
+      if (ev.action === 'check') fly.stats.checks += 1;
       if (ev.street === 'preflop' && (ev.action === 'call' || ev.action === 'bet' || ev.action === 'raise')) vpip = true;
       if (ev.street === 'preflop' && (ev.action === 'bet' || ev.action === 'raise')) pfr = true;
     }
     if (vpip) fly.stats.vpipHands += 1;
     if (pfr) fly.stats.pfrHands += 1;
+    rememberProfile(fly, table.handNumber);
+    notePolicyMove(fly, learned, table.handNumber);
   }
 
   const winners = [];
@@ -576,6 +625,105 @@ export function getPublicState(table) {
   };
 }
 
+function situationOf(table, fly, decision) {
+  const player = table.hand?.players?.[fly.seat];
+  return {
+    street: table.hand?.street || decision?.street || null,
+    hole: player ? toCards(player.hole) : [],
+    board: table.hand ? toCards(table.hand.board) : [],
+    legal: Array.isArray(decision?.legal) ? decision.legal.slice() : [],
+    executed: decision?.action || null,
+    logits: decision?.logits ? { ...decision.logits } : null,
+  };
+}
+
+function compareOf(fly) {
+  const compare = fly.policyCompare || {};
+  const since = compare.since;
+  return {
+    decisions: compare.decisions || 0,
+    disagreements: compare.disagreements || 0,
+    lastLive: compare.lastLive || null,
+    lastFrozen: compare.lastFrozen || null,
+    moved: Boolean(since),
+    sinceHand: since?.handNumber ?? null,
+    handsSince: since ? fly.stats.handsPlayed - since.handsPlayed : 0,
+    chipsSince: since ? fly.stats.netChips - since.netChips : 0,
+    winsSince: since ? fly.stats.handsWon - since.handsWon : 0,
+  };
+}
+
+function unit(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function rememberProfile(fly, handNumber) {
+  if (!Array.isArray(fly.profileHistory)) fly.profileHistory = [];
+  const profile = strategyProfile(fly);
+  fly.profileHistory.push({
+    handNumber,
+    values: profile.axes.map((axis) => axis.value),
+  });
+  if (fly.profileHistory.length > 40) fly.profileHistory.shift();
+}
+
+/** Radar values from the live parameters, swapped to counted rates after 3 hands. */
+function strategyProfile(fly) {
+  const hands = fly.stats.handsPlayed || 0;
+  const folds = fly.stats.folds || 0;
+  const checks = fly.stats.checks || 0;
+  const actions = (fly.stats.betsRaises || 0) + (fly.stats.calls || 0) + folds + checks;
+  const observed = hands >= 3 && actions > 0;
+  const aggParam = fly.params.aggression / (fly.params.aggression + 1.5);
+  const observedAgg = actions ? fly.stats.betsRaises / actions : aggParam;
+  const observedRisk = hands ? fly.stats.vpipHands / hands : fly.params.vpip;
+  const observedFold = actions ? folds / actions : fly.params.foldToPressure;
+  return {
+    hands,
+    source: observed ? 'observed' : 'model',
+    history: Array.isArray(fly.profileHistory) ? fly.profileHistory.map((row) => ({
+      handNumber: row.handNumber,
+      values: row.values.slice(),
+    })) : [],
+    note: observed
+      ? 'Aggression, risk, and fold share use this fly’s action counts. Bluff frequency and response to bets stay on the learned parameters. A faded shape is an earlier hand, not a personality score.'
+      : 'Fewer than 3 hands, so this is the model parameters. Fold willingness uses fold-to-pressure until folds have been counted.',
+    axes: [
+      {
+        key: 'aggression',
+        label: 'Aggression',
+        value: unit(observed ? observedAgg : aggParam),
+        detail: observed ? 'share of actions that bet or raised' : `parameter ${fly.params.aggression.toFixed(2)}`,
+      },
+      {
+        key: 'bluff',
+        label: 'Bluff frequency',
+        value: unit(fly.params.bluff),
+        detail: `learned bluff ${fly.params.bluff.toFixed(2)}`,
+      },
+      {
+        key: 'risk',
+        label: 'Risk tolerance',
+        value: unit(observed ? observedRisk : fly.params.vpip),
+        detail: observed ? 'observed preflop entry' : `VPIP parameter ${fly.params.vpip.toFixed(2)}`,
+      },
+      {
+        key: 'respond',
+        label: 'Response to bets',
+        value: unit(fly.params.foldToPressure),
+        detail: `fold-to-pressure ${fly.params.foldToPressure.toFixed(2)}`,
+      },
+      {
+        key: 'fold',
+        label: 'Willingness to fold',
+        value: unit(observed ? observedFold : fly.params.foldToPressure),
+        detail: observed ? 'share of actions that folded' : 'same fold-to-pressure parameter',
+      },
+    ],
+  };
+}
+
 export function getFlyInspection(table, flyId) {
   const fly = table.flies.find((item) => item.id === flyId);
   if (!fly) throw new Error(`unknown fly ${flyId}`);
@@ -614,9 +762,12 @@ export function getFlyInspection(table, flyId) {
       base: { ...fly.base },
       current: { ...fly.params },
     },
+    profile: strategyProfile(fly),
     decision,
     nodes: NODES.map((node) => ({ id: node.id, layer: node.layer, x: node.x, y: node.y, label: node.label })),
     activity: activity.slice(),
+    situation: situationOf(table, fly, decision),
+    policyCompare: compareOf(fly),
     edges: fly.brain.edges.map((edge) => ({
       from: NODES[edge.from].id,
       to: NODES[edge.to].id,
@@ -625,7 +776,7 @@ export function getFlyInspection(table, flyId) {
     })),
     learning: {
       last: fly.learningLog[0] || null,
-      recent: fly.learningLog.slice(0, 8),
+      recent: fly.learningLog.slice(),
     },
     opponentModel: Object.fromEntries(
       Object.keys(fly.model).map((id) => {

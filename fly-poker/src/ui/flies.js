@@ -570,6 +570,47 @@ function paintEmote(tag, kind) {
   tex.needsUpdate = true;
 }
 
+const FADED_MESH_OPACITY = 0.28;
+
+function collectBodyMaterials(group) {
+  const materials = [];
+  const seen = new Set();
+  group.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of list) {
+      if (seen.has(mat)) continue;
+      seen.add(mat);
+      materials.push({
+        mat,
+        opacity: mat.opacity,
+        transparent: mat.transparent,
+        depthWrite: mat.depthWrite,
+      });
+    }
+  });
+  return materials;
+}
+
+function applyFlyFade(fly, faded) {
+  if (fly.faded === faded) return;
+  fly.faded = faded;
+  for (const entry of fly.bodyMaterials) {
+    entry.mat.transparent = faded ? true : entry.transparent;
+    entry.mat.opacity = faded ? FADED_MESH_OPACITY : entry.opacity;
+    entry.mat.depthWrite = faded ? false : entry.depthWrite;
+    entry.mat.needsUpdate = true;
+  }
+}
+
+/** Folded, sitting out, or busted. An all-in fly still in the live hand stays solid. */
+function flyMeshFaded(row, handLive) {
+  if (!row) return false;
+  if (row.folded || row.sittingOut) return true;
+  if (Number(row.stack) > 0) return false;
+  return !(handLive && row.allIn);
+}
+
 function aimInward(obj, x, z) {
   obj.lookAt(x, obj.position.y, z);
   obj.rotateY(Math.PI);
@@ -626,6 +667,8 @@ export function placeCast(scene, flies) {
     emote.sprite.visible = false;
     emote.kind = '';
     fly.group.add(emote.sprite);
+    fly.bodyMaterials = collectBodyMaterials(fly.group);
+    fly.faded = false;
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.32, 0.4, 28),
@@ -733,6 +776,7 @@ export function placeCast(scene, flies) {
       paintTag(seat.tag, row?.name || seat.name, stack, seat.color, Boolean(row?.isActor));
       seat.ring.visible = Boolean(row?.isActor);
       paintEmote(seat.emote, reactionFor(seat, row, winners, state));
+      applyFlyFade(seat.fly, flyMeshFaded(row, Boolean(state?.handLive)));
     }
   }
 
@@ -748,7 +792,6 @@ export function placeCast(scene, flies) {
   }
 
   function tick(time) {
-    faceTable();
     const flapTime = time * 0.001;
     for (const seat of seats) {
       const flap = Math.sin(flapTime * 14 + seat.fly.phase) * 0.16;
