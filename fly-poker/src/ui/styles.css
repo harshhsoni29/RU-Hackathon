@@ -194,15 +194,14 @@ body::after {
   right: 12px;
   bottom: 12px;
   display: flex;
-  flex-wrap: nowrap;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  height: 76px;
-  min-height: 76px;
-  max-height: 76px;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  height: 124px;
+  min-height: 124px;
+  max-height: 124px;
   box-sizing: border-box;
-  padding: 8px;
+  padding: 8px 10px;
   border-radius: 16px;
   overflow: hidden;
 }
@@ -233,20 +232,22 @@ button.ghost { background: transparent; }
 
 .speed input { width: 88px; accent-color: var(--brass); vertical-align: middle; }
 
-.stats { display: flex; flex-wrap: nowrap; gap: 6px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.stats { display: flex; flex-wrap: nowrap; gap: 8px; flex: 0 0 52px; min-width: 0; overflow: hidden; }
 .plate {
   text-align: left;
   flex: 1 1 0;
   min-width: 0;
-  height: 58px;
+  height: 52px;
   box-sizing: border-box;
-  padding: 6px 10px 6px 12px;
+  padding: 5px 12px 5px 14px;
   border-radius: 12px;
   border-left: 4px solid var(--fly, var(--brass));
   box-shadow: none;
   overflow: hidden;
 }
+.plate { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; column-gap: 8px; row-gap: 2px; }
 .plate .who, .plate .meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plate .meta { grid-column: 1 / -1; color: var(--muted); }
 .plate .who { font-weight: 700; }
 .plate .chips { font-variant-numeric: tabular-nums; color: var(--brass); }
 .plate.acting { outline: 1px solid var(--fly, var(--brass)); }
@@ -256,7 +257,7 @@ button.ghost { background: transparent; }
 .error {
   position: absolute;
   left: 50%;
-  bottom: 92px;
+  bottom: 144px;
   transform: translateX(-50%);
   margin: 0;
   padding: 8px 12px;

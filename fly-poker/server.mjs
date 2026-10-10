@@ -34,6 +34,7 @@ function geminiKey() {
 function send(res, code, body, type) {
   res.writeHead(code, {
     'content-type': type,
+    'cache-control': 'no-store',
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS',
     'access-control-allow-headers': 'content-type',

@@ -5,7 +5,7 @@
  * central brain, mushroom-body horns, and small ventral antennal lobes.
  * Synapses are the real 45-neuron circuit. Rest colors stay bright.
  * Active sections flare once, then playback holds on the executed action.
- * Drag orbits, the wheel zooms, Reset restores the camera.
+ * Drag orbits, right-drag or shift-drag pans, the wheel, +/− or a double-click zooms, Reset restores the camera.
  */
 
 import * as THREE from 'three';
@@ -58,7 +58,7 @@ const PART_LINE = {
   descending: 'The descending path is choosing.',
   motor: 'Motor neurons are acting.',
 };
-const DEFAULT_ORBIT = { azimuth: 0, polar: Math.PI / 2, radius: 4.6 };
+const DEFAULT_ORBIT = { azimuth: 0, polar: Math.PI / 2, radius: 4.6, panX: 0, panY: 0 };
 const BRAIN_SCALE = 1;
 const NARRATE_URL = 'http://127.0.0.1:8767/api/narrate';
 const QUIET = 0.02;
@@ -263,7 +263,9 @@ const CSS = `
 .fly-brain-learn-pane {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 8px 14px 10px;
   background: rgba(0, 0, 0, 0.35);
   border-radius: 12px;
@@ -271,15 +273,10 @@ const CSS = `
 .fly-brain-radar {
   display: block;
   width: 100%;
-  flex: 1.4 1 52%;
-  min-height: 150px;
-  align-self: stretch;
+  flex: 0 0 300px;
+  height: 300px;
 }
-.fly-brain-learn-pane .fly-brain-history {
-  overflow: auto;
-  min-height: 0;
-  flex: 1 1 auto;
-}
+.fly-brain-learn-pane .fly-brain-history { flex: 0 0 auto; }
 .fly-brain-history {
   margin: 8px 0 0;
   padding: 0;
@@ -317,7 +314,7 @@ const CSS = `
   line-height: 14px;
   color: rgba(235, 238, 250, 0.72);
 }
-.fly-brain-caption { top: 8px; right: 78px; }
+.fly-brain-caption { top: 8px; right: 150px; }
 .fly-brain-legend { bottom: 8px; flex-wrap: wrap; }
 .fly-brain-legend i {
   display: inline-block;
@@ -327,11 +324,16 @@ const CSS = `
   border-radius: 50%;
   vertical-align: 0;
 }
-.fly-brain-reset {
+.fly-brain-tools {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 2;
+  display: flex;
+  gap: 4px;
+}
+.fly-brain-reset {
+  min-width: 26px;
   border-radius: 999px;
   border: 1px solid rgba(235, 238, 250, 0.28);
   background: rgba(8, 10, 16, 0.72);
@@ -653,23 +655,30 @@ function pushPoint(out, x, y, z, section, tint, neuron) {
   out.push(point);
 }
 
+/** Neck connective outputs, just below the central brain. */
 const MOTOR_TIPS = [
-  [-0.32, -0.78, 0.1],
-  [-0.16, -0.84, 0.14],
-  [0, -0.87, 0.16],
-  [0.16, -0.84, 0.14],
-  [0.32, -0.78, 0.1],
+  [-0.16, -0.58, 0.06],
+  [-0.08, -0.62, 0.08],
+  [0, -0.64, 0.09],
+  [0.08, -0.62, 0.08],
+  [0.16, -0.58, 0.06],
+];
+
+/**
+ * Drosophila proportions: the whole brain is about 2.4x the central brain's width.
+ * Each optic lobe is four nested, curved neuropils pressed against the central brain:
+ * lobula plate and lobula innermost, the large medulla, then the thin lamina outside.
+ */
+const OPTIC_SHEETS = [
+  { lateral: 0.42, thick: 0.05, ry: 0.24, rz: 0.13, bow: 0.03, n: 700 },
+  { lateral: 0.5, thick: 0.06, ry: 0.3, rz: 0.17, bow: 0.04, n: 1000 },
+  { lateral: 0.64, thick: 0.1, ry: 0.4, rz: 0.22, bow: 0.06, n: 2200 },
+  { lateral: 0.8, thick: 0.03, ry: 0.38, rz: 0.2, bow: 0.05, n: 1000 },
 ];
 
 function opticLobe(sign, out) {
-  const sheets = [
-    { lateral: 2.95, ry: 0.62, rz: 0.28, bow: 0.18, n: 1200 },
-    { lateral: 2.42, ry: 0.78, rz: 0.34, bow: 0.22, n: 1700 },
-    { lateral: 1.9, ry: 0.7, rz: 0.32, bow: 0.16, n: 1400 },
-    { lateral: 1.42, ry: 0.5, rz: 0.22, bow: 0.1, n: 800 },
-  ];
   let cursor = sign < 0 ? 8000 : 32000;
-  for (const sheet of sheets) {
+  for (const sheet of OPTIC_SHEETS) {
     for (let i = 0; i < sheet.n; i++) {
       cursor += 1;
       const ang = unit(cursor, 1) * Math.PI * 2;
@@ -677,25 +686,17 @@ function opticLobe(sign, out) {
       const y = Math.sin(ang) * rad * sheet.ry;
       const z = Math.cos(ang) * rad * sheet.rz;
       const crown = 1 - rad * rad;
-      const x = sign * (sheet.lateral + crown * sheet.bow + (unit(cursor, 3) - 0.5) * 0.045);
-      pushPoint(out, x, y + 0.06, z - rad * rad * 0.06, 'sensory', 'sensory');
+      const x = sign * (sheet.lateral + crown * sheet.bow + (unit(cursor, 3) - 0.5) * sheet.thick);
+      pushPoint(out, x, y + 0.04, z - rad * rad * 0.04, 'sensory', 'sensory');
     }
-  }
-  for (let i = 0; i < 220; i++) {
-    cursor += 1;
-    const t = i / 220;
-    const x = sign * (0.55 + (1 - t) * 0.78);
-    const y = 0.04 + (unit(cursor, 4) - 0.5) * 0.07 * (0.45 + t);
-    const z = (unit(cursor, 5) - 0.5) * 0.05;
-    pushPoint(out, x, y, z, 'sensory', 'sensory');
   }
 }
 
 function antennalLobes(out) {
   for (const sign of [-1, 1]) {
-    const ox = sign * 0.55;
-    const oy = -0.5;
-    const oz = 0.22;
+    const ox = sign * 0.11;
+    const oy = -0.22;
+    const oz = 0.2;
     for (let i = 0; i < 240; i++) {
       const ang = unit(i, 90 + sign) * Math.PI * 2;
       const rad = Math.cbrt(unit(i, 91 + sign));
@@ -703,9 +704,9 @@ function antennalLobes(out) {
       const ring = Math.sqrt(Math.max(0, rad * rad - zz * zz));
       pushPoint(
         out,
-        ox + Math.cos(ang) * ring * 0.14,
-        oy + zz * 0.11,
-        oz + Math.sin(ang) * ring * 0.12,
+        ox + Math.cos(ang) * ring * 0.09,
+        oy + zz * 0.08,
+        oz + Math.sin(ang) * ring * 0.08,
         'sensory',
         'sensory',
       );
@@ -739,42 +740,43 @@ function centralMass(out) {
   }
 }
 
+/** Stalk and vertical lobe take PPL1 (punishment) dopamine. The horizontal lobe takes PAM (reward) dopamine. */
 function mushroomBodies(out) {
   for (const sign of [-1, 1]) {
     for (let i = 0; i < 640; i++) {
       const t = (i + 0.5) / 640;
       const hook = Math.sin(t * Math.PI * 0.92);
-      const y = 0.32 + hook * 0.78;
-      const x = sign * (0.08 + t * 0.34 + Math.sin(t * 2.4) * 0.05);
-      const z = -0.06 + t * 0.18;
+      const y = 0.06 + hook * 0.26;
+      const x = sign * (0.05 + t * 0.16 + Math.sin(t * 2.4) * 0.02);
+      const z = 0.14 - t * 0.26;
       const a = unit(i, 40 + sign) * Math.PI * 2;
-      const rad = Math.sqrt(unit(i, 41 + sign)) * (0.055 * (1 - t * 0.45));
+      const rad = Math.sqrt(unit(i, 41 + sign)) * (0.03 * (1 - t * 0.4));
       pushPoint(
         out,
         x + Math.cos(a) * rad,
         y + (unit(i, 42 + sign) - 0.5) * rad * 0.35,
         z + Math.sin(a) * rad,
         'kenyon',
-        'kenyon',
+        'punish',
       );
     }
     for (let i = 0; i < 220; i++) {
       const t = (i + 0.5) / 220;
-      const y = 0.46 + Math.sin(t * Math.PI) * 0.2;
-      const x = sign * (0.3 * (1 - t) + 0.04);
-      const z = 0.1 + t * 0.14;
+      const y = 0.08 + Math.sin(t * Math.PI) * 0.06;
+      const x = sign * (0.14 * (1 - t) + 0.02);
+      const z = 0.14 + t * 0.02;
       const a = unit(i, 51 + sign) * Math.PI * 2;
-      const rad = Math.sqrt(unit(i, 52 + sign)) * 0.04;
-      pushPoint(out, x + Math.cos(a) * rad, y, z + Math.sin(a) * rad * 0.7, 'kenyon', 'kenyon');
+      const rad = Math.sqrt(unit(i, 52 + sign)) * 0.025;
+      pushPoint(out, x + Math.cos(a) * rad, y, z + Math.sin(a) * rad * 0.7, 'kenyon', 'reward');
     }
     for (let i = 0; i < 180; i++) {
       const a = unit(i, 60 + sign) * Math.PI * 2;
-      const r = 0.03 + Math.sqrt(unit(i, 61 + sign)) * 0.065;
+      const r = 0.02 + Math.sqrt(unit(i, 61 + sign)) * 0.06;
       pushPoint(
         out,
-        sign * 0.16 + Math.cos(a) * r,
-        0.3 + Math.sin(a) * r * 0.45,
-        -0.08 + (unit(i, 62 + sign) - 0.5) * 0.05,
+        sign * 0.2 + Math.cos(a) * r,
+        0.32 + Math.sin(a) * r * 0.45,
+        -0.13 + (unit(i, 62 + sign) - 0.5) * 0.05,
         'kenyon',
         'kenyon',
       );
@@ -786,12 +788,12 @@ function descendingTract(out) {
   for (let i = 0; i < 480; i++) {
     const t = (i + 0.5) / 480;
     const a = unit(i, 70) * Math.PI * 2;
-    const rad = Math.sqrt(unit(i, 71)) * (0.055 * (1 - t * 0.25));
+    const rad = Math.sqrt(unit(i, 71)) * (0.04 * (1 - t * 0.25));
     const side = i % 2 === 0 ? -1 : 1;
     pushPoint(
       out,
-      side * 0.05 + Math.cos(a) * rad,
-      -0.14 - t * 0.4,
+      side * 0.04 + Math.cos(a) * rad,
+      -0.26 - t * 0.3,
       0.02 + Math.sin(a) * rad * 0.55,
       'descending',
       'descending',
@@ -803,7 +805,7 @@ function motorTips(out) {
   MOTOR_TIPS.forEach((tip, index) => {
     for (let i = 0; i < 90; i++) {
       const a = unit(i, 80 + index) * Math.PI * 2;
-      const r = Math.sqrt(unit(i, 81 + index)) * 0.045;
+      const r = Math.sqrt(unit(i, 81 + index)) * 0.03;
       pushPoint(
         out,
         tip[0] + Math.cos(a) * r,
@@ -927,9 +929,13 @@ function firedPath(inspection) {
   }).join(' → ');
 }
 
+const BRAIN_CENTER_Y = -0.08;
+const ZOOM_MIN = 1.1;
+const ZOOM_MAX = 9;
+
 function framedRadius(aspect, zoom) {
-  const halfH = 1.12;
-  const halfW = 3.3;
+  const halfH = 0.6;
+  const halfW = 0.95;
   const tanV = Math.tan((33 * Math.PI) / 360);
   const dist = Math.max(halfH / tanV, halfW / (tanV * Math.max(0.75, aspect || 1)));
   return dist * (zoom / DEFAULT_ORBIT.radius);
@@ -938,12 +944,19 @@ function framedRadius(aspect, zoom) {
 function placeCamera(camera, orbit) {
   const radius = framedRadius(camera.aspect, orbit.radius);
   const sinP = Math.sin(orbit.polar);
+  const tx = Math.cos(orbit.azimuth) * orbit.panX;
+  const tz = -Math.sin(orbit.azimuth) * orbit.panX;
+  const ty = BRAIN_CENTER_Y + orbit.panY;
   camera.position.set(
-    radius * sinP * Math.sin(orbit.azimuth),
-    radius * Math.cos(orbit.polar),
-    radius * sinP * Math.cos(orbit.azimuth),
+    tx + radius * sinP * Math.sin(orbit.azimuth),
+    ty + radius * Math.cos(orbit.polar),
+    tz + radius * sinP * Math.cos(orbit.azimuth),
   );
-  camera.lookAt(0, 0.12, 0);
+  camera.lookAt(tx, ty, tz);
+}
+
+function zoomBy(rec, factor) {
+  rec.orbit.radius = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, rec.orbit.radius * factor));
 }
 
 function resetOrbit(rec) {
@@ -964,22 +977,43 @@ float gainAt(float section) {
   if (section < 3.5) return u3;
   return u4;
 }
+float anyGain() {
+  return max(max(max(u0, u1), max(u2, u3)), u4);
+}
+uniform float t0;
+uniform float t1;
+uniform float t2;
+uniform float t3;
+uniform float t4;
+uniform float uReward;
+uniform float uPunish;
+float toneAt(float section, float valence) {
+  if (section < 0.5) return t0;
+  if (section < 1.5) return valence > 0.5 ? uReward : valence < -0.5 ? uPunish : t1;
+  if (section < 2.5) return t2;
+  if (section < 3.5) return t3;
+  return t4;
+}
 `;
 
 const POINT_VERT = `
 attribute vec3 color;
 attribute float neuron;
 attribute float section;
+attribute float valence;
 varying vec3 vColor;
 varying float vGlow;
 uniform float uSize;
 ${GAIN_GLSL}
 void main() {
-  float level = neuron * gainAt(section);
-  vColor = mix(color, vec3(1.0), clamp(level, 0.0, 1.0) * 0.65);
+  float tone = toneAt(section, valence);
+  float gain = gainAt(section);
+  float level = clamp(gain * (0.45 + 0.55 * clamp(neuron * 3.0, 0.0, 1.0)) * tone, 0.0, 1.0);
+  float dim = gain > 0.001 ? 1.0 : 1.0 - 0.65 * anyGain();
+  vColor = mix(color * dim * (0.15 + 0.85 * tone), vec3(1.0), level * 0.6);
   vGlow = level;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = clamp(uSize * (1.15 + level * 2.4) * (3.4 / max(0.35, -mv.z)), 1.15, 7.0);
+  gl_PointSize = clamp(uSize * (1.15 + level * 1.8) * pow(3.4 / max(0.35, -mv.z), 0.6), 1.0, 4.5);
   gl_Position = projectionMatrix * mv;
 }
 `;
@@ -994,8 +1028,12 @@ varying vec3 vColor;
 ${GAIN_GLSL}
 void main() {
   float fromGain = gainAt(fromSection);
-  float level = fromGain > 0.0 ? actFrom * fromGain : actTo * gainAt(toSection);
-  vColor = color + (1.0 - color) * level;
+  float toGain = gainAt(toSection);
+  float lit = max(fromGain, toGain);
+  float tone = fromGain >= toGain ? toneAt(fromSection, 0.0) : toneAt(toSection, 0.0);
+  float level = clamp(lit * (0.5 + 0.5 * clamp(max(actFrom, actTo) * 3.0, 0.0, 1.0)) * tone, 0.0, 1.0);
+  float dim = lit > 0.001 ? 1.0 : 1.0 - 0.7 * anyGain();
+  vColor = mix(color * dim, vec3(1.0), level * 0.7);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -1039,8 +1077,10 @@ function buildView(host) {
   const colors = new Float32Array(count * 3);
   const neuron = new Float32Array(count);
   const section = new Float32Array(count);
+  const valence = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const point = samples[i];
+    valence[i] = point.tint === 'reward' ? 1 : point.tint === 'punish' ? -1 : 0;
     positions[i * 3] = point.x;
     positions[i * 3 + 1] = point.y;
     positions[i * 3 + 2] = point.z;
@@ -1055,8 +1095,16 @@ function buildView(host) {
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('neuron', new THREE.BufferAttribute(neuron, 1));
   geometry.setAttribute('section', new THREE.BufferAttribute(section, 1));
+  geometry.setAttribute('valence', new THREE.BufferAttribute(valence, 1));
   const uniforms = {
-    uSize: { value: 2.35 },
+    uSize: { value: 1.25 },
+    t0: { value: 1 },
+    t1: { value: 1 },
+    t2: { value: 1 },
+    t3: { value: 1 },
+    t4: { value: 1 },
+    uReward: { value: 1 },
+    uPunish: { value: 1 },
     u0: { value: 0 },
     u1: { value: 0 },
     u2: { value: 0 },
@@ -1100,16 +1148,16 @@ function neuronSpot(layer, index) {
     const sign = i < 6 ? -1 : 1;
     const t = (i % 6) / 5;
     const ang = -1.05 + t * 2.1;
-    const lateral = 2.15 + Math.cos(ang) * 0.42;
-    return { x: sign * lateral, y: Math.sin(ang) * 0.58 + 0.06, z: 0.04 };
+    const lateral = 0.6 + Math.cos(ang) * 0.06;
+    return { x: sign * lateral, y: Math.sin(ang) * 0.3 + 0.04, z: 0.03 };
   }
   if (layer === 'kenyon') {
     const sign = i < 5 ? -1 : 1;
     const t = (i % 5) / 4;
     return {
-      x: sign * (0.08 + t * 0.34),
-      y: 0.32 + Math.sin(t * Math.PI * 0.92) * 0.78,
-      z: -0.06 + t * 0.18,
+      x: sign * (0.05 + t * 0.16),
+      y: 0.06 + Math.sin(t * Math.PI * 0.92) * 0.26,
+      z: 0.14 - t * 0.26,
     };
   }
   if (layer === 'central') {
@@ -1119,7 +1167,7 @@ function neuronSpot(layer, index) {
   }
   if (layer === 'descending') {
     const t = i / 7;
-    return { x: (i % 2 === 0 ? -1 : 1) * 0.06, y: -0.16 - t * 0.36, z: 0.02 };
+    return { x: (i % 2 === 0 ? -1 : 1) * 0.04, y: -0.28 - t * 0.26, z: 0.02 };
   }
   const tip = MOTOR_TIPS[Math.max(0, Math.min(MOTOR_TIPS.length - 1, i))] || MOTOR_TIPS[0];
   return { x: tip[0], y: tip[1], z: tip[2] };
@@ -1306,6 +1354,8 @@ function bakeBrain(view, inspection) {
   view.means = sectionMeans(nodes, activity);
   const executed = inspection?.situation?.executed || inspection?.decision?.action || '';
   view.hot = playbackSections(view.means, executed);
+  view.tone = toneOf(inspection);
+  applyTone(view.uniforms, view.tone);
   const baked = bakePointNeurons(view.samples, nodes, activity);
   const neuron = view.points.geometry.getAttribute('neuron');
   neuron.array.set(baked);
@@ -1313,14 +1363,67 @@ function bakeBrain(view, inspection) {
   ensureSynapses(view, inspection, activity);
 }
 
-function applyGains(uniforms, replay) {
-  const gain = replay.layer ? replay.gain : 0;
-  const id = replay.layer ? SECTION_ID[replay.layer] : -1;
-  uniforms.u0.value = id === 0 ? gain : 0;
-  uniforms.u1.value = id === 1 ? gain : 0;
-  uniforms.u2.value = id === 2 ? gain : 0;
-  uniforms.u3.value = id === 3 ? gain : 0;
-  uniforms.u4.value = id === 4 ? gain : 0;
+/**
+ * Neuromodulator tone emulated from the fly's learned strategy axes (0..1).
+ * Octopamine (insect noradrenaline) drives aggression through central-brain hubs (aSP2, pC1/P1)
+ * and the descending path. PAM dopamine signals reward to the horizontal mushroom-body lobe;
+ * PPL1-γ1pedc dopamine signals punishment to the stalk and vertical lobe. Card evidence
+ * (optic input) is weighted down as bluffing goes up.
+ */
+function toneOf(inspection) {
+  const axes = inspection?.profile?.axes || [];
+  const axis = (key, fallback) => {
+    const hit = axes.find((row) => row.key === key);
+    return hit && Number.isFinite(hit.value) ? hit.value : fallback;
+  };
+  const aggression = axis('aggression', 0.5);
+  const bluff = axis('bluff', 0.3);
+  const risk = axis('risk', 0.5);
+  const fold = axis('fold', 0.4);
+  const scale = (v) => 0.25 + 1.35 * v;
+  return {
+    octopamine: aggression,
+    reward: risk,
+    punish: fold,
+    cards: 1 - 0.6 * bluff,
+    tones: [scale(1 - 0.6 * bluff), scale(0.5), scale(aggression), scale(aggression), scale(0.3 + 0.5 * aggression)],
+    rewardTone: scale(risk),
+    punishTone: scale(fold),
+  };
+}
+
+function applyTone(uniforms, tone) {
+  uniforms.t0.value = tone.tones[0];
+  uniforms.t1.value = tone.tones[1];
+  uniforms.t2.value = tone.tones[2];
+  uniforms.t3.value = tone.tones[3];
+  uniforms.t4.value = tone.tones[4];
+  uniforms.uReward.value = tone.rewardTone;
+  uniforms.uPunish.value = tone.punishTone;
+}
+
+function toneLine(tone) {
+  const level = (v) => (v >= 0.66 ? 'high' : v >= 0.36 ? 'medium' : 'low');
+  return `Neuromodulator tone (emulated from this fly's play): octopamine ${level(tone.octopamine)} `
+    + `(aggression ${tone.octopamine.toFixed(2)}) brightens the central brain and descending path; `
+    + `PAM reward dopamine ${level(tone.reward)} (risk ${tone.reward.toFixed(2)}) lights the horizontal mushroom-body lobe; `
+    + `PPL1 punishment dopamine ${level(tone.punish)} (fold ${tone.punish.toFixed(2)}) lights the vertical lobe; `
+    + `card weighting ${tone.cards.toFixed(2)} sets the optic lobes.`;
+}
+
+const HELD_GAIN = 0.7;
+
+function applyGains(uniforms, replay, hot) {
+  const gains = [0, 0, 0, 0, 0];
+  if (replay.layer && replay.resting) {
+    for (const layer of hot) gains[SECTION_ID[layer]] = HELD_GAIN;
+  }
+  if (replay.layer) gains[SECTION_ID[replay.layer]] = replay.gain;
+  uniforms.u0.value = gains[0];
+  uniforms.u1.value = gains[1];
+  uniforms.u2.value = gains[2];
+  uniforms.u3.value = gains[3];
+  uniforms.u4.value = gains[4];
 }
 
 function paintCaption(rec, replay) {
@@ -1357,9 +1460,10 @@ function paintRegions(rec, now) {
     bakeBrain(view, rec.inspection);
     view.baked = rec.inspection;
     rec.captionKey = '';
+    setText(rec.toneNote, toneLine(view.tone));
   }
   const replay = replayHot(now, rec.brainT0 || now, view.hot, view.replay);
-  applyGains(view.uniforms, replay);
+  applyGains(view.uniforms, replay, view.hot);
   paintCaption(rec, replay);
 }
 
@@ -1637,8 +1741,8 @@ function paintRadar(rec) {
   g.clearRect(0, 0, w, h);
   const cx = w * 0.5;
   const cy = h * 0.5;
-  const rx = w * 0.34;
-  const ry = h * 0.28;
+  const rx = Math.min(w * 0.3, h * 0.34);
+  const ry = rx;
   const axes = profile.axes;
   const n = axes.length;
   const color = rec.inspection.colorHex || '#e6c27a';
@@ -1898,6 +2002,15 @@ export function createBrainPanel(container) {
   reset.type = 'button';
   reset.className = 'fly-brain-reset';
   reset.textContent = 'Reset';
+  const zoomOut = reset.cloneNode();
+  zoomOut.textContent = '−';
+  zoomOut.setAttribute('aria-label', 'Zoom out');
+  const zoomIn = reset.cloneNode();
+  zoomIn.textContent = '+';
+  zoomIn.setAttribute('aria-label', 'Zoom in');
+  const tools = document.createElement('div');
+  tools.className = 'fly-brain-tools';
+  tools.append(zoomOut, zoomIn, reset);
   const caption = document.createElement('div');
   caption.className = 'fly-brain-caption';
   const step = document.createElement('span');
@@ -1915,7 +2028,7 @@ export function createBrainPanel(container) {
   }
   const links = document.createElement('span');
   legend.appendChild(links);
-  viewHost.append(reset, caption, legend);
+  viewHost.append(tools, caption, legend);
   const live = document.createElement('aside');
   live.className = 'fly-brain-live';
   const thoughtKicker = document.createElement('p');
@@ -1941,6 +2054,8 @@ export function createBrainPanel(container) {
   const part = document.createElement('p');
   part.className = 'fly-brain-part';
   part.textContent = 'No region is flaring. The colors are the resting brain.';
+  const toneNote = document.createElement('p');
+  toneNote.className = 'fly-brain-part';
   const path = document.createElement('p');
   path.className = 'fly-brain-path';
   const growthKicker = document.createElement('p');
@@ -1953,7 +2068,7 @@ export function createBrainPanel(container) {
   growth.append(waiting);
   const adapt = document.createElement('p');
   adapt.className = 'fly-brain-adapt';
-  live.append(thoughtKicker, thought, hand, why, executed, activations, part, path, compareKicker, compare, growthKicker, growth, adapt);
+  live.append(thoughtKicker, thought, hand, why, executed, activations, part, toneNote, path, compareKicker, compare, growthKicker, growth, adapt);
   brainPane.append(viewHost, live);
   const learnPane = document.createElement('div');
   learnPane.className = 'fly-brain-pane fly-brain-learn-pane';
@@ -2023,6 +2138,7 @@ export function createBrainPanel(container) {
     why,
     executed,
     activations,
+    toneNote,
     compare,
     part,
     path,
@@ -2061,15 +2177,31 @@ export function createBrainPanel(container) {
     watcher.observe(stage);
   }
   reset.addEventListener('click', () => resetOrbit(rec));
+  zoomIn.addEventListener('click', () => zoomBy(rec, 0.75));
+  zoomOut.addEventListener('click', () => zoomBy(rec, 1 / 0.75));
+  viewHost.addEventListener('contextmenu', (event) => event.preventDefault());
+  viewHost.addEventListener('dblclick', (event) => {
+    if (tools.contains(event.target)) return;
+    zoomBy(rec, 0.6);
+  });
   viewHost.addEventListener('pointerdown', (event) => {
-    if (event.target === reset) return;
-    rec.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    if (tools.contains(event.target)) return;
+    const pan = event.button === 2 || event.shiftKey;
+    rec.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, pan };
     viewHost.setPointerCapture(event.pointerId);
   });
   viewHost.addEventListener('pointermove', (event) => {
     if (!rec.drag || rec.drag.id !== event.pointerId) return;
-    rec.orbit.azimuth -= (event.clientX - rec.drag.x) * 0.007;
-    rec.orbit.polar = Math.max(0.18, Math.min(Math.PI - 0.18, rec.orbit.polar + (event.clientY - rec.drag.y) * 0.005));
+    const dx = event.clientX - rec.drag.x;
+    const dy = event.clientY - rec.drag.y;
+    if (rec.drag.pan) {
+      const scale = (rec.orbit.radius / DEFAULT_ORBIT.radius) * 2.4 / Math.max(200, viewHost.clientHeight);
+      rec.orbit.panX = Math.max(-1, Math.min(1, rec.orbit.panX - dx * scale));
+      rec.orbit.panY = Math.max(-0.7, Math.min(0.7, rec.orbit.panY + dy * scale));
+    } else {
+      rec.orbit.azimuth -= dx * 0.007;
+      rec.orbit.polar = Math.max(0.18, Math.min(Math.PI - 0.18, rec.orbit.polar + dy * 0.005));
+    }
     rec.drag.x = event.clientX;
     rec.drag.y = event.clientY;
   });
@@ -2079,7 +2211,7 @@ export function createBrainPanel(container) {
   viewHost.addEventListener('wheel', (event) => {
     if (rec.tab !== 'brain') return;
     event.preventDefault();
-    rec.orbit.radius = Math.max(2.4, Math.min(10, rec.orbit.radius * Math.exp(event.deltaY * 0.0011)));
+    zoomBy(rec, Math.exp(event.deltaY * 0.0015));
   }, { passive: false });
 
   return root;

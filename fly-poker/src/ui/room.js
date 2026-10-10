@@ -504,6 +504,7 @@ export function createRailView(canvas) {
   controls.minPolarAngle = 0.45;
   controls.maxPolarAngle = 1.28;
   controls.update();
+  controls.saveState();
 
   function resize() {
     const w = canvas.clientWidth || window.innerWidth;

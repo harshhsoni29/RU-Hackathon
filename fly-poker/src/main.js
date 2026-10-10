@@ -113,6 +113,7 @@ try {
   const title = mountTitle(() => {
     entered = true;
     view.controls.autoRotate = false;
+    view.controls.reset();
     hud.show();
   });
   view.controls.autoRotate = true;

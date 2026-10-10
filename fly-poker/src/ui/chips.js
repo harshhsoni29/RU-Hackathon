@@ -350,10 +350,75 @@ function restoreHomes(layer) {
   }
 }
 
+const RING_R = 0.62;
+const RING_REST = 0.55;
+
+function potRingTexture() {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const g = canvas.getContext('2d');
+  const c = size / 2;
+  g.fillStyle = 'rgba(230, 194, 122, 0.10)';
+  g.beginPath();
+  g.arc(c, c, c - 14, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = '#e6c27a';
+  g.lineWidth = 12;
+  g.beginPath();
+  g.arc(c, c, c - 14, 0, Math.PI * 2);
+  g.stroke();
+  g.lineWidth = 4;
+  g.setLineDash([18, 14]);
+  g.beginPath();
+  g.arc(c, c, c - 44, 0, Math.PI * 2);
+  g.stroke();
+  g.fillStyle = '#e6c27a';
+  g.font = '700 56px Georgia, serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('P O T', c, size - 86);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+/** Gold ring on the felt that marks the pot area. Flashes when chips land in it. */
+function ensurePotRing(layer, at) {
+  if (layer.potRing) return layer.potRing;
+  const ring = new THREE.Mesh(
+    new THREE.PlaneGeometry(RING_R * 2, RING_R * 2),
+    new THREE.MeshBasicMaterial({ map: potRingTexture(), transparent: true, opacity: RING_REST, depthWrite: false }),
+  );
+  ring.name = 'pot-ring';
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(at.x, at.y - 0.006, at.z + 0.22);
+  ring.renderOrder = -1;
+  ring.updateMatrix();
+  ring.matrixAutoUpdate = false;
+  layer.group.add(ring);
+  layer.potRing = ring;
+  return ring;
+}
+
+function flashPotRing(layer) {
+  const ring = layer.potRing;
+  if (!ring) return;
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / 700);
+    ring.material.opacity = RING_REST + (1 - RING_REST) * (1 - t);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function ensurePot(layer) {
   if (layer.potMesh && layer.potMesh.parent) return layer.potMesh;
   const pot = makePile('pot', 'pot', 2, POT_COLS_BESIDE);
   const at = potChipPoint(layer);
+  ensurePotRing(layer, at);
   pot.position.set(at.x, at.y, at.z);
   // Local -Z is the next row. Point that toward the rail so rows stay below the cards.
   pot.rotation.y = Math.PI;
@@ -584,6 +649,7 @@ export function createChipLayer(scene, deps = {}) {
   };
   liveLayers.add(layer);
   restoreHomes(layer);
+  ensurePotRing(layer, potChipPoint(layer));
   return layer;
 }
 
@@ -655,6 +721,7 @@ export function playChipAnimation(layer, action, publicState) {
           await glide(layer, travel, pointOf(travel), pointOf(pot), 0, 0.58);
           if (layer.epoch !== epoch) return;
           absorb(layer, pot, travel);
+          flashPotRing(layer);
         }
       }
     }
