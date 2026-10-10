@@ -1,8 +1,10 @@
 /**
  * Chip travel for bets and pots.
- * A bet, call, or raise slides a clay stack from that fly to the center of
- * the felt and leaves it there. Check and fold move nothing. A won pot slides
- * from the center to the winner and stays until the next deal.
+ * Each fly keeps a clay stack on the felt in front of them. A bet, call, or
+ * raise peels chips off that stack and slides them to the center of the felt,
+ * where they stay as the pot. Check and fold move nothing. A won pot slides
+ * back onto the winner's own stack. The next deal rebuilds stacks from the
+ * public totals.
  */
 
 import * as THREE from 'three';
@@ -109,7 +111,6 @@ function flyAnchor(layer, id) {
 function inFrontOfFly(layer, flyId, slot) {
   const fly = flyAnchor(layer, flyId);
   const center = boardAnchor(layer);
-  const pot = potAnchor(layer);
   const seat = seatRecord(layer, flyId);
   const parked = seat && readVec(seat.cardAnchor);
   let dx = 0;
@@ -136,12 +137,13 @@ function inFrontOfFly(layer, flyId, slot) {
   const feltDist = 1 / Math.hypot(ux / rx, uz / rz);
   // Close to the fly, on the cloth: just inside the felt edge, not the middle.
   const closeToFly = len - 0.38;
-  const onCloth = feltDist - 0.06;
+  const onCloth = feltDist - 0.1;
   const dist = Math.max(0.35, Math.min(closeToFly, onCloth));
   const side = (slot - 0.5) * 0.12;
+  const board = boardAnchor(layer);
   return {
     x: center.x + ux * dist + (-uz) * side,
-    y: pot.y + 0.03,
+    y: board.y + 0.02,
     z: center.z + uz * dist + ux * side,
   };
 }
@@ -158,9 +160,28 @@ function potChipPoint(layer, index) {
   };
 }
 
-function chipCount(amount) {
-  const n = 4 + Math.floor((amount > 0 ? amount : 10) / 30);
-  return Math.max(4, Math.min(8, n));
+function chipsForStack(amount) {
+  if (amount == null || !Number.isFinite(amount)) return 6;
+  if (amount <= 0) return 0;
+  return Math.max(3, Math.min(12, Math.round(3 + amount / 150)));
+}
+
+function chipsForBet(amount) {
+  const n = Math.round((amount > 0 ? amount : 20) / 40);
+  return Math.max(2, Math.min(6, n));
+}
+
+function seatedIds(layer) {
+  const seats = layer.deps && layer.deps.seats;
+  if (Array.isArray(seats) && seats.length) {
+    return seats.map((seat) => seat && seat.id).filter(Boolean);
+  }
+  return ['vera', 'buzz', 'nib', 'callie', 'mani'];
+}
+
+function colorFor(layer, flyId) {
+  const index = seatedIds(layer).indexOf(flyId);
+  return index < 0 ? 0 : index;
 }
 
 function makeChip(look, twist) {
@@ -182,17 +203,121 @@ function makeChip(look, twist) {
   return chip;
 }
 
-function makeStack(amount, colorIndex) {
+function layoutChips(group) {
+  const chips = group.children;
+  for (let i = 0; i < chips.length; i++) {
+    chips[i].position.set(0, CHIP_H * 0.5 + i * (CHIP_H + 0.003), 0);
+    chips[i].rotation.set(0, i * 0.48, 0);
+  }
+}
+
+function makeStack(count, colorIndex) {
   const group = new THREE.Group();
-  const n = chipCount(amount);
+  const n = Math.max(1, count);
   for (let i = 0; i < n; i++) {
     const look = DENOM[(colorIndex + (i % 2)) % DENOM.length];
-    const chip = makeChip(look, i * 0.2);
-    chip.position.y = CHIP_H * 0.5 + i * (CHIP_H + 0.003);
-    chip.rotation.y = i * 0.48;
-    group.add(chip);
+    group.add(makeChip(look, i * 0.2));
   }
+  layoutChips(group);
   return group;
+}
+
+function ensureHome(layer, flyId) {
+  const existing = layer.homes.get(flyId);
+  if (existing && existing.parent) return existing;
+  const home = new THREE.Group();
+  home.name = `stack-${flyId}`;
+  home.userData.kind = 'home';
+  home.userData.flyId = flyId;
+  const at = inFrontOfFly(layer, flyId, 0);
+  home.position.set(at.x, at.y, at.z);
+  layer.group.add(home);
+  layer.homes.set(flyId, home);
+  return home;
+}
+
+function setHomeCount(layer, flyId, count) {
+  const home = ensureHome(layer, flyId);
+  const colorIndex = colorFor(layer, flyId);
+  while (home.children.length > count) home.remove(home.children[home.children.length - 1]);
+  while (home.children.length < count) {
+    const i = home.children.length;
+    const look = DENOM[(colorIndex + (i % 2)) % DENOM.length];
+    home.add(makeChip(look, i * 0.2));
+  }
+  layoutChips(home);
+  return home;
+}
+
+function restoreHomes(layer) {
+  const ids = new Set(seatedIds(layer));
+  for (const id of layer.amounts.keys()) ids.add(id);
+  for (const id of ids) {
+    const amount = layer.amounts.has(id) ? layer.amounts.get(id) : null;
+    setHomeCount(layer, id, chipsForStack(amount));
+  }
+}
+
+function placePot(layer, count, index) {
+  const pile = makeStack(count, index + 2);
+  const at = potChipPoint(layer, index);
+  pile.position.set(at.x, at.y, at.z);
+  pile.userData.kind = 'pot';
+  layer.group.add(pile);
+  layer.pot.push(pile);
+  return pile;
+}
+
+/** Lift chips off a fly's own stack. Spawns a pile only when that stack is empty. */
+function takeBet(layer, flyId, amount, allIn, remain) {
+  const home = ensureHome(layer, flyId);
+  let want = chipsForBet(amount);
+  if (allIn && home.children.length > 0) want = home.children.length;
+  else if (Number.isFinite(remain)) {
+    const leave = chipsForStack(remain);
+    if (home.children.length <= leave) setHomeCount(layer, flyId, leave + want);
+    want = Math.max(1, ensureHome(layer, flyId).children.length - leave);
+  }
+  const n = Math.min(want, home.children.length);
+  if (n <= 0) {
+    const born = makeStack(chipsForBet(amount), colorFor(layer, flyId));
+    born.position.copy(home.position);
+    born.userData.kind = 'pot';
+    layer.group.add(born);
+    return born;
+  }
+  const travel = new THREE.Group();
+  travel.userData.kind = 'pot';
+  const left = home.children.length - n;
+  for (let i = 0; i < n; i++) travel.add(home.children[home.children.length - 1]);
+  layoutChips(home);
+  layoutChips(travel);
+  travel.position.set(
+    home.position.x,
+    home.position.y + left * (CHIP_H + 0.003),
+    home.position.z,
+  );
+  layer.group.add(travel);
+  return travel;
+}
+
+function absorb(home, travel) {
+  const chips = travel.children.slice();
+  for (const chip of chips) home.add(chip);
+  layoutChips(home);
+  travel.removeFromParent();
+}
+
+function notedStack(action, flyId) {
+  if (!action || !flyId) return null;
+  if (Array.isArray(action.seats)) {
+    for (const seat of action.seats) {
+      if (seat && seat.id === flyId && Number.isFinite(seat.stack)) return seat.stack;
+    }
+  }
+  if (action.stacks && Number.isFinite(action.stacks[flyId])) return action.stacks[flyId];
+  if (action.flyId === flyId && Number.isFinite(action.stack)) return action.stack;
+  return null;
 }
 
 function startPump(layer) {
@@ -277,7 +402,7 @@ function readAction(action) {
   const amount = stated != null && stated > 0 ? stated : 10;
   const winners = winnerRows(action);
   return {
-    spend: spends ? { flyId, amount } : null,
+    spend: spends ? { flyId, amount, allIn: !!action.allIn, remain: notedStack(action, flyId) } : null,
     winners,
   };
 }
@@ -288,8 +413,10 @@ function wipe(layer) {
   for (const job of jobs) job.done();
   layer.group.clear();
   layer.bets.clear();
+  layer.homes.clear();
   layer.pot = [];
   layer.won = [];
+  restoreHomes(layer);
 }
 
 export function releaseHand(handNumber) {
@@ -326,11 +453,31 @@ export function createChipLayer(scene, deps = {}) {
     epoch: 0,
     handNumber: null,
     bets: new Map(),
+    homes: new Map(),
+    amounts: new Map(),
     pot: [],
     won: [],
   };
   liveLayers.add(layer);
+  restoreHomes(layer);
   return layer;
+}
+
+/** Match personal stacks to public seat totals. Seeds the center pot from blinds. */
+export function syncStacks(state) {
+  const seats = state && Array.isArray(state.seats) ? state.seats : null;
+  for (const layer of liveLayers) {
+    if (seats) {
+      for (const seat of seats) {
+        if (!seat || !seat.id || !Number.isFinite(seat.stack)) continue;
+        layer.amounts.set(seat.id, seat.stack);
+        setHomeCount(layer, seat.id, chipsForStack(seat.stack));
+      }
+    }
+    restoreHomes(layer);
+    const potAmount = state && Number.isFinite(state.pot) ? state.pot : 0;
+    if (potAmount > 0 && layer.pot.length === 0) placePot(layer, chipsForBet(potAmount), 0);
+  }
 }
 
 export function playChipAnimation(layer, action) {
@@ -341,42 +488,36 @@ export function playChipAnimation(layer, action) {
   const run = async () => {
     const epoch = layer.epoch;
     if (plan.spend) {
-      const stack = makeStack(plan.spend.amount, layer.pot.length);
-      stack.userData.kind = 'pot';
-      layer.group.add(stack);
-      const from = inFrontOfFly(layer, plan.spend.flyId, 0);
+      const spend = plan.spend;
+      const stack = takeBet(layer, spend.flyId, spend.amount, spend.allIn, spend.remain);
+      const from = { x: stack.position.x, y: stack.position.y, z: stack.position.z };
       await glide(layer, stack, from, potChipPoint(layer, layer.pot.length), 0, 0.58);
       if (layer.epoch !== epoch) return;
       layer.pot.push(stack);
+      if (Number.isFinite(spend.remain)) layer.amounts.set(spend.flyId, spend.remain);
+      else if (spend.allIn) layer.amounts.set(spend.flyId, 0);
     }
     if (!plan.winners.length || layer.epoch !== epoch) return;
 
     const moving = layer.pot.splice(0, layer.pot.length);
     if (!moving.length) {
-      for (const win of plan.winners) {
-        const stack = makeStack(win.amount, layer.won.length);
-        stack.userData.kind = 'pot';
-        layer.group.add(stack);
-        moving.push(stack);
+      for (let i = 0; i < plan.winners.length; i++) {
+        const pile = placePot(layer, chipsForBet(plan.winners[i].amount), i);
+        moving.push(pile);
       }
+      layer.pot = [];
     }
     await Promise.all(moving.map((stack, index) => {
       const win = plan.winners[index % plan.winners.length];
-      const from = {
-        x: stack.position.x,
-        y: stack.position.y,
-        z: stack.position.z,
-      };
-      if (!layer.pot.length && from.x === 0 && from.y === 0 && from.z === 0) {
-        const pot = potChipPoint(layer, index);
-        from.x = pot.x;
-        from.y = pot.y;
-        from.z = pot.z;
-      }
-      return glide(layer, stack, from, inFrontOfFly(layer, win.id, index), index * 0.06, 0.64).then(() => {
+      const home = ensureHome(layer, win.id);
+      const from = { x: stack.position.x, y: stack.position.y, z: stack.position.z };
+      const to = { x: home.position.x, y: home.position.y, z: home.position.z };
+      return glide(layer, stack, from, to, index * 0.06, 0.64).then(() => {
         if (layer.epoch !== epoch) return;
-        stack.userData.kind = 'won';
-        layer.won.push(stack);
+        absorb(home, stack);
+        const gained = Number.isFinite(win.amount) ? win.amount : 0;
+        const prev = layer.amounts.has(win.id) ? layer.amounts.get(win.id) : null;
+        if (prev != null) layer.amounts.set(win.id, prev + gained);
       });
     }));
   };

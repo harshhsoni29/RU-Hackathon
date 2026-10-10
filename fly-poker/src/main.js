@@ -9,9 +9,9 @@ import {
 } from './contract.js';
 import { placeCast, setFlyEmote } from './ui/flies.js';
 import { mountHud } from './ui/hud.js';
-import { mountRail } from './ui/rail.js';
 import { TABLE, createRailView } from './ui/room.js';
 import { mountTitle } from './ui/title.js';
+import { mountBetView } from './ui/betview.js';
 
 const boot = document.getElementById('boot');
 const canvas = document.getElementById('view');
@@ -100,7 +100,10 @@ try {
   }
 
   const hud = mountHud();
-  const rail = mountRail();
+  mountBetView(view, {
+    getDealModule: () => dealMod,
+    getDealLayer: () => dealLayer,
+  });
   const title = mountTitle(() => {
     entered = true;
     hud.show();
@@ -118,7 +121,6 @@ try {
     const state = getPublicState(table);
     cast.updateTags(state, winners);
     hud.render(state, { busy, selectedId });
-    rail.render(state);
     return state;
   }
 

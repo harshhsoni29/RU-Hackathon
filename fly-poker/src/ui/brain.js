@@ -1,8 +1,9 @@
 /**
  * Fly brain overlay.
  * Circuit: layered schematic lit by inspection.activity.
- * Brain: a Three.js volume. Optic lobes, central mass, mushroom bodies,
- * descending tract. A region's brightness is that section's real activity.
+ * Brain: a dense Three.js point cloud. Layered optic lobes, an irregular
+ * central mass, mushroom-body horns, a descending cord, motor tips.
+ * One section lights at a time, in order, from inspection.activity.
  * Drag orbits, the wheel zooms, Reset restores the camera.
  */
 
@@ -34,35 +35,22 @@ const REST = {
   motor: [140, 112, 64],
 };
 
-const BRAIN_REST = {
-  sensory: [92, 219, 214],
-  kenyon: [128, 148, 242],
-  central: [158, 168, 204],
-  descending: [250, 179, 92],
-  motor: [242, 209, 140],
-};
+const CLOUD = [72, 86, 148];
 const BRAIN_HOT = {
-  sensory: [102, 250, 240],
-  kenyon: [179, 154, 255],
+  sensory: [179, 154, 255],
+  kenyon: [210, 170, 255],
   central: [255, 163, 77],
   descending: [255, 115, 71],
   motor: [255, 214, 102],
 };
-const TISSUE = [
-  { section: 'sensory', x: -1.22, y: 0.0, z: 0.02, rx: 0.74, ry: 0.58, rz: 0.46, n: 640 },
-  { section: 'sensory', x: 1.22, y: 0.0, z: 0.02, rx: 0.74, ry: 0.58, rz: 0.46, n: 640 },
-  { section: 'sensory', x: -0.68, y: 0.0, z: 0.0, rx: 0.26, ry: 0.2, rz: 0.16, n: 100 },
-  { section: 'sensory', x: 0.68, y: 0.0, z: 0.0, rx: 0.26, ry: 0.2, rz: 0.16, n: 100 },
-  { section: 'central', x: 0, y: -0.04, z: 0, rx: 0.56, ry: 0.48, rz: 0.44, n: 860 },
-  { section: 'kenyon', x: -0.22, y: 0.72, z: 0.04, rx: 0.16, ry: 0.4, rz: 0.14, n: 260 },
-  { section: 'kenyon', x: 0.22, y: 0.72, z: 0.04, rx: 0.16, ry: 0.4, rz: 0.14, n: 260 },
-  { section: 'kenyon', x: -0.24, y: 1.05, z: 0.06, rx: 0.2, ry: 0.14, rz: 0.14, n: 120 },
-  { section: 'kenyon', x: 0.24, y: 1.05, z: 0.06, rx: 0.2, ry: 0.14, rz: 0.14, n: 120 },
-  { section: 'descending', x: 0, y: -0.66, z: 0.06, rx: 0.3, ry: 0.26, rz: 0.22, n: 340 },
-  { section: 'descending', x: 0, y: -0.9, z: 0.1, rx: 0.16, ry: 0.14, rz: 0.12, n: 100 },
-  { section: 'motor', x: -0.16, y: -1.16, z: 0.12, rx: 0.13, ry: 0.11, rz: 0.1, n: 120 },
-  { section: 'motor', x: 0.16, y: -1.16, z: 0.12, rx: 0.13, ry: 0.11, rz: 0.1, n: 120 },
-];
+const FIRE = {
+  sensory: BRAIN_HOT.sensory,
+  visual: [102, 250, 240],
+  kenyon: BRAIN_HOT.kenyon,
+  central: BRAIN_HOT.central,
+  descending: BRAIN_HOT.descending,
+  motor: BRAIN_HOT.motor,
+};
 const PLACE = {
   sensory: 'optic lobes',
   kenyon: 'mushroom bodies',
@@ -70,8 +58,9 @@ const PLACE = {
   descending: 'descending',
   motor: 'outputs',
 };
-const DEFAULT_ORBIT = { azimuth: 0.48, polar: 1.08, radius: 5.4 };
+const DEFAULT_ORBIT = { azimuth: 0.62, polar: 1.15, radius: 3.35 };
 const QUIET = 0.02;
+const STEP_MS = 1500;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const panels = new WeakMap();
@@ -79,14 +68,15 @@ const panels = new WeakMap();
 const CSS = `
 .fly-brain {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 0;
+  left: 0;
   z-index: 5;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  width: min(400px, calc(100% - 24px));
-  height: min(720px, calc(100% - 24px));
+  width: 100%;
+  height: min(640px, calc(100vh - 200px));
+  min-height: 420px;
   padding: 12px 14px 10px;
   color: #f6efe4;
   background: rgba(14, 11, 10, 0.94);
@@ -190,7 +180,7 @@ const CSS = `
   inset: 0;
   border-radius: 12px;
   overflow: hidden;
-  background: radial-gradient(at 50% 45%, #14161f, #0b0c10 70%);
+  background: #07080d;
 }
 .fly-brain-gl canvas {
   width: 100%;
@@ -532,37 +522,187 @@ function heat(layer, level) {
   return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
-function fillEllipsoid(part) {
-  const points = [];
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  const shells = 6;
-  let weight = 0;
-  const shellWeight = [];
-  for (let s = 1; s <= shells; s++) {
-    const w = s * s;
-    shellWeight.push(w);
-    weight += w;
-  }
-  for (let s = 1; s <= shells; s++) {
-    const n = Math.max(1, Math.round(part.n * shellWeight[s - 1] / weight));
-    const radius = s / shells;
-    for (let i = 0; i < n && points.length < part.n; i++) {
-      const y = 1 - (2 * (i + 0.5)) / n;
-      const ring = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = (i + s * 3) * golden;
-      points.push({
-        x: part.x + Math.cos(theta) * ring * radius * part.rx,
-        y: part.y + y * radius * part.ry,
-        z: part.z + Math.sin(theta) * ring * radius * part.rz,
-        cx: part.x,
-        cy: part.y,
-        cz: part.z,
-        section: part.section,
-        seed: points.length * 0.37,
-      });
+function unit(i, salt) {
+  const x = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function pushPoint(out, x, y, z, section, tint) {
+  out.push({ x, y, z, section, tint });
+}
+
+function opticLobe(sign, out) {
+  const layers = [
+    { lateral: 0.62, ry: 0.44, rz: 0.32, thick: 0.05, n: 720, tint: 'sensory' },
+    { lateral: 0.86, ry: 0.58, rz: 0.4, thick: 0.06, n: 1100, tint: 'sensory' },
+    { lateral: 1.12, ry: 0.64, rz: 0.44, thick: 0.07, n: 1400, tint: 'sensory' },
+    { lateral: 1.36, ry: 0.48, rz: 0.3, thick: 0.04, n: 680, tint: 'visual' },
+  ];
+  let cursor = sign < 0 ? 8000 : 32000;
+  for (const layer of layers) {
+    for (let i = 0; i < layer.n; i++) {
+      cursor += 1;
+      const ang = unit(cursor, 1) * Math.PI * 2;
+      const shellPick = unit(cursor, 2);
+      const shell = shellPick > 0.3 ? 0.84 + unit(cursor, 3) * 0.16 : 0.18 + unit(cursor, 4) * 0.55;
+      const r = Math.sqrt(unit(cursor, 5)) * shell;
+      let y = Math.sin(ang) * r * layer.ry;
+      let z = Math.cos(ang) * r * layer.rz;
+      z -= r * r * 0.2;
+      y -= layer.lateral * 0.045;
+      y *= 1 + (unit(cursor, 6) - 0.5) * 0.1;
+      z *= 1 + (unit(cursor, 7) - 0.5) * 0.08;
+      const x = sign * (layer.lateral + (unit(cursor, 8) - 0.5) * layer.thick * 2);
+      pushPoint(out, x, y, z, 'sensory', layer.tint);
     }
   }
-  return points;
+  for (let i = 0; i < 240; i++) {
+    cursor += 1;
+    const t = i / 240;
+    const x = sign * (0.34 + t * 0.28);
+    const y = (unit(cursor, 9) - 0.5) * 0.12 * (1.05 - t);
+    const z = (unit(cursor, 10) - 0.5) * 0.08;
+    pushPoint(out, x, y, z, 'sensory', 'sensory');
+  }
+}
+
+function centralMass(out) {
+  const n = 3600;
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  let kept = 0;
+  let i = 0;
+  while (kept < n && i < n * 4) {
+    const y = 1 - (2 * (i + 0.5)) / (n * 1.4);
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = i * golden;
+    const radial = unit(i, 20) > 0.32 ? 0.88 + unit(i, 21) * 0.12 : unit(i, 22) ** 0.5;
+    let x = Math.cos(theta) * ring * radial;
+    let yy = y * radial;
+    let z = Math.sin(theta) * ring * radial;
+    const lump = 1
+      + 0.09 * Math.sin(x * 7.4 + 1.7) * Math.cos(yy * 6.1)
+      + 0.05 * Math.sin(z * 9.2 + yy * 3);
+    x *= 0.4 * lump;
+    yy *= 0.36 * lump;
+    z *= 0.32 * lump;
+    yy -= 0.02;
+    const hole = Math.hypot(x / 0.1, (yy + 0.06) / 0.08, (z - 0.04) / 0.08);
+    i += 1;
+    if (hole < 1) continue;
+    pushPoint(out, x, yy, z, 'central', 'central');
+    kept += 1;
+  }
+  for (let k = 0; k < 480; k++) {
+    const a = unit(k, 30) * Math.PI * 2;
+    const r = Math.sqrt(unit(k, 31)) * 0.15;
+    pushPoint(
+      out,
+      Math.cos(a) * r * 1.15,
+      -0.34 + Math.sin(a) * r * 0.65,
+      0.02 + (unit(k, 32) - 0.5) * 0.1,
+      'central',
+      'central',
+    );
+  }
+}
+
+function mushroomBodies(out) {
+  for (const sign of [-1, 1]) {
+    for (let i = 0; i < 460; i++) {
+      const t = (i + 0.5) / 460;
+      const y = 0.1 + t * 0.58;
+      const x = sign * (0.06 + t * 0.11);
+      const z = 0.02 + Math.sin(t * 2.2) * 0.05;
+      const a = unit(i, 40 + sign) * Math.PI * 2;
+      const rad = Math.sqrt(unit(i, 41 + sign)) * (0.05 * (1 - t * 0.2));
+      pushPoint(
+        out,
+        x + Math.cos(a) * rad,
+        y + (unit(i, 42 + sign) - 0.5) * rad * 0.35,
+        z + Math.sin(a) * rad * 0.7,
+        'kenyon',
+        'kenyon',
+      );
+    }
+    for (let i = 0; i < 280; i++) {
+      const t = (i + 0.5) / 280;
+      const a = unit(i, 51 + sign) * Math.PI * 2;
+      const rad = Math.sqrt(unit(i, 52 + sign)) * 0.038;
+      pushPoint(
+        out,
+        sign * (0.16 * (1 - t) + 0.02) + Math.cos(a) * rad,
+        0.05 + Math.sin(a) * rad * 0.55,
+        0.05 + t * 0.26,
+        'kenyon',
+        'kenyon',
+      );
+    }
+    for (let i = 0; i < 200; i++) {
+      const a = unit(i, 60 + sign) * Math.PI * 2;
+      const r = 0.045 + Math.sqrt(unit(i, 61 + sign)) * 0.06;
+      pushPoint(
+        out,
+        sign * 0.2 + Math.cos(a) * r,
+        0.26 + Math.sin(a) * r * 0.5,
+        -0.18 + (unit(i, 62 + sign) - 0.4) * 0.07,
+        'kenyon',
+        'kenyon',
+      );
+    }
+  }
+}
+
+function descendingTract(out) {
+  for (const sign of [-1, 1]) {
+    for (let i = 0; i < 420; i++) {
+      const t = (i + 0.5) / 420;
+      const a = unit(i, 70 + sign) * Math.PI * 2;
+      const rad = Math.sqrt(unit(i, 71 + sign)) * (0.065 * (1 - t * 0.5));
+      pushPoint(
+        out,
+        sign * (0.045 + t * 0.02) + Math.cos(a) * rad,
+        -0.4 - t * 0.55,
+        -0.02 - t * 0.1 + Math.sin(a) * rad,
+        'descending',
+        'descending',
+      );
+    }
+  }
+}
+
+function motorTips(out) {
+  const tips = [
+    [-0.14, -1.02, 0.02],
+    [-0.05, -1.08, 0.07],
+    [0.05, -1.1, 0.0],
+    [0.13, -1.04, -0.05],
+    [0.0, -0.98, -0.08],
+  ];
+  tips.forEach((tip, index) => {
+    for (let i = 0; i < 100; i++) {
+      const a = unit(i, 80 + index) * Math.PI * 2;
+      const r = Math.sqrt(unit(i, 81 + index)) * 0.042;
+      pushPoint(
+        out,
+        tip[0] + Math.cos(a) * r,
+        tip[1] + (unit(i, 82 + index) - 0.5) * 0.035,
+        tip[2] + Math.sin(a) * r,
+        'motor',
+        'motor',
+      );
+    }
+  });
+}
+
+function buildCloud() {
+  const out = [];
+  opticLobe(-1, out);
+  opticLobe(1, out);
+  centralMass(out);
+  mushroomBodies(out);
+  descendingTract(out);
+  motorTips(out);
+  return out;
 }
 
 function sectionMeans(nodes, activity) {
@@ -596,28 +736,16 @@ function hotSections(means) {
   return LAYERS.filter((layer) => (means[layer] || 0) >= QUIET);
 }
 
-function replayHot(now, t0, hot, reduce) {
+function replayHot(now, t0, hot) {
   if (!hot.length) return { layer: null, gain: 0, index: 0, count: 0 };
-  if (reduce || hot.length === 1) return { layer: hot[0], gain: 1, index: 0, count: hot.length, all: reduce };
-  const step = 820;
-  const span = hot.length * step;
+  if (hot.length === 1) return { layer: hot[0], gain: 1, index: 0, count: 1 };
+  const span = hot.length * STEP_MS;
   const elapsed = ((now - t0) % span + span) % span;
-  const index = Math.min(hot.length - 1, Math.floor(elapsed / step));
-  const phase = (elapsed - index * step) / step;
-  const rise = smooth(Math.min(1, phase / 0.22));
-  const fall = phase < 0.78 ? 1 : 1 - smooth((phase - 0.78) / 0.22);
-  return { layer: hot[index], gain: rise * fall, index, count: hot.length, all: false };
-}
-
-function mixColor(layer, amount) {
-  const rest = BRAIN_REST[layer] || BRAIN_REST.central;
-  const hot = BRAIN_HOT[layer] || BRAIN_HOT.central;
-  const t = clamp01(amount);
-  return new THREE.Color(
-    (rest[0] + (hot[0] - rest[0]) * t) / 255,
-    (rest[1] + (hot[1] - rest[1]) * t) / 255,
-    (rest[2] + (hot[2] - rest[2]) * t) / 255,
-  );
+  const index = Math.min(hot.length - 1, Math.floor(elapsed / STEP_MS));
+  const phase = (elapsed - index * STEP_MS) / STEP_MS;
+  const rise = smooth(Math.min(1, phase / 0.12));
+  const fall = phase < 0.84 ? 1 : 1 - smooth((phase - 0.84) / 0.16);
+  return { layer: hot[index], gain: rise * fall, index, count: hot.length };
 }
 
 function placeCamera(camera, orbit) {
@@ -627,7 +755,7 @@ function placeCamera(camera, orbit) {
     orbit.radius * Math.cos(orbit.polar),
     orbit.radius * sinP * Math.cos(orbit.azimuth),
   );
-  camera.lookAt(0, 0.02, 0);
+  camera.lookAt(0, -0.04, 0);
 }
 
 function resetOrbit(rec) {
@@ -635,9 +763,36 @@ function resetOrbit(rec) {
   if (rec.view) placeCamera(rec.view.camera, rec.orbit);
 }
 
+const POINT_VERT = `
+attribute vec3 color;
+attribute float glow;
+varying vec3 vColor;
+varying float vGlow;
+uniform float uSize;
+void main() {
+  vColor = color;
+  vGlow = glow;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = clamp(uSize * (0.8 + glow) * (3.2 / max(0.35, -mv.z)), 1.0, 4.2);
+  gl_Position = projectionMatrix * mv;
+}
+`;
+
+const POINT_FRAG = `
+varying vec3 vColor;
+varying float vGlow;
+void main() {
+  vec2 q = gl_PointCoord - vec2(0.5);
+  float d = dot(q, q);
+  if (d > 0.25) discard;
+  float alpha = smoothstep(0.25, 0.02, d) * (0.5 + vGlow * 0.5);
+  gl_FragColor = vec4(vColor, alpha);
+}
+`;
+
 function buildView(host) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setClearColor(0x0b0c10, 1);
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+  renderer.setClearColor(0x07080d, 1);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
@@ -648,60 +803,35 @@ function buildView(host) {
   host.insertBefore(renderer.domElement, host.firstChild);
 
   const scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0x9aa4be, 0.55));
-  const key = new THREE.DirectionalLight(0xfff1dc, 1.25);
-  key.position.set(2.4, 3.2, 4);
-  scene.add(key);
-  const rim = new THREE.DirectionalLight(0x6f86ff, 0.4);
-  rim.position.set(-3.2, -1.4, -2.2);
-  scene.add(rim);
-
-  const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 40);
-  const parts = TISSUE.map((part, index) => {
-    const samples = fillEllipsoid(part);
-    const count = samples.length;
-    const positions = new Float32Array(count * 3);
-    samples.forEach((point, i) => {
-      positions[i * 3] = point.x - part.x;
-      positions[i * 3 + 1] = point.y - part.y;
-      positions[i * 3 + 2] = point.z - part.z;
-    });
-    const colors = new Float32Array(count * 3);
-    const rest = mixColor(part.section, 0);
-    for (let i = 0; i < count; i++) rest.toArray(colors, i * 3);
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
-      size: 0.034,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      sizeAttenuation: true,
-    }));
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 36, 28),
-      new THREE.MeshStandardMaterial({
-        color: rest.clone(),
-        emissive: rest.clone(),
-        emissiveIntensity: 0.08,
-        transparent: true,
-        opacity: 0.22,
-        roughness: 0.62,
-        metalness: 0.04,
-        depthWrite: false,
-      }),
-    );
-    mesh.scale.set(part.rx, part.ry, part.rz);
-    const group = new THREE.Group();
-    group.position.set(part.x, part.y, part.z);
-    group.add(mesh);
-    group.add(points);
-    scene.add(group);
-    return { section: part.section, group, mesh, points, count, seed: index * 0.7 };
+  const camera = new THREE.PerspectiveCamera(33, 1, 0.05, 40);
+  const samples = buildCloud();
+  const count = samples.length;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const glow = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const point = samples[i];
+    positions[i * 3] = point.x;
+    positions[i * 3 + 1] = point.y;
+    positions[i * 3 + 2] = point.z;
+    colors[i * 3] = CLOUD[0] / 255;
+    colors[i * 3 + 1] = CLOUD[1] / 255;
+    colors[i * 3 + 2] = CLOUD[2] / 255;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
+  const material = new THREE.ShaderMaterial({
+    uniforms: { uSize: { value: 2.05 } },
+    vertexShader: POINT_VERT,
+    fragmentShader: POINT_FRAG,
+    transparent: true,
+    depthWrite: false,
   });
-  return { renderer, scene, camera, parts };
+  const points = new THREE.Points(geometry, material);
+  scene.add(points);
+  return { renderer, scene, camera, points, samples, count };
 }
 
 function resizeView(rec) {
@@ -720,49 +850,39 @@ function paintRegions(rec, now) {
   const means = sectionMeans(nodes, activity);
   const samples = sectionSamples(nodes, activity);
   const hot = hotSections(means);
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const replay = replayHot(now, rec.brainT0 || now, hot, reduce);
-  for (const part of rec.view.parts) {
-    const values = samples[part.section] || [];
-    const mean = means[part.section] || 0;
-    const showing = replay.all ? mean >= QUIET : part.section === replay.layer;
-    const gain = showing ? replay.gain : 0;
-    const colors = part.points.geometry.getAttribute('color');
-    const rest = BRAIN_REST[part.section] || BRAIN_REST.central;
-    const hotColor = BRAIN_HOT[part.section] || BRAIN_HOT.central;
-    for (let i = 0; i < part.count; i++) {
-      const neuron = values.length ? values[i % values.length] : 0;
-      const level = neuron >= QUIET ? neuron * gain : 0;
-      const t = level;
-      colors.setXYZ(
-        i,
-        (rest[0] + (hotColor[0] - rest[0]) * t) / 255,
-        (rest[1] + (hotColor[1] - rest[1]) * t) / 255,
-        (rest[2] + (hotColor[2] - rest[2]) * t) / 255,
-      );
-    }
-    colors.needsUpdate = true;
-    const glow = mean >= QUIET ? mean * gain : 0;
-    part.mesh.material.color.copy(mixColor(part.section, glow));
-    part.mesh.material.emissive.copy(mixColor(part.section, glow));
-    part.mesh.material.emissiveIntensity = 0.08 + glow * 1.7;
-    part.mesh.material.opacity = 0.2 + glow * 0.45;
-    part.points.material.size = 0.03 + glow * 0.045;
-    const pulse = glow > 0 && !reduce ? 1 + glow * 0.07 * Math.sin(now * 0.007 + part.seed) : 1;
-    part.group.scale.setScalar(pulse);
+  const replay = replayHot(now, rec.brainT0 || now, hot);
+  const view = rec.view;
+  const colors = view.points.geometry.getAttribute('color');
+  const glowAttr = view.points.geometry.getAttribute('glow');
+  const cursor = {};
+  for (const layer of LAYERS) cursor[layer] = 0;
+  for (let i = 0; i < view.count; i++) {
+    const point = view.samples[i];
+    const values = samples[point.section] || [];
+    const neuron = values.length ? values[cursor[point.section] % values.length] : 0;
+    cursor[point.section] += 1;
+    const gain = point.section === replay.layer ? replay.gain : 0;
+    const level = neuron >= QUIET ? neuron * gain : 0;
+    const hotColor = FIRE[point.tint] || FIRE[point.section] || FIRE.central;
+    colors.setXYZ(
+      i,
+      (CLOUD[0] + (hotColor[0] - CLOUD[0]) * level) / 255,
+      (CLOUD[1] + (hotColor[1] - CLOUD[1]) * level) / 255,
+      (CLOUD[2] + (hotColor[2] - CLOUD[2]) * level) / 255,
+    );
+    glowAttr.setX(i, level);
   }
+  colors.needsUpdate = true;
+  glowAttr.needsUpdate = true;
   if (!hot.length) {
     rec.step.textContent = 'Quiet';
     rec.count.textContent = '';
     rec.links.textContent = 'no section above threshold';
     return;
   }
-  const active = replay.all ? hot.join(' · ') : replay.layer;
-  rec.step.textContent = replay.all ? 'Settled' : (LAYER_TITLE[replay.layer] || '');
-  rec.count.textContent = replay.all
-    ? `${hot.length} sections lit`
-    : `step ${replay.index + 1} / ${replay.count}`;
-  rec.links.textContent = replay.all ? active : (PLACE[replay.layer] || '');
+  rec.step.textContent = LAYER_TITLE[replay.layer] || '';
+  rec.count.textContent = `step ${replay.index + 1} / ${replay.count}`;
+  rec.links.textContent = PLACE[replay.layer] || '';
 }
 
 function renderView(rec, now) {
@@ -778,12 +898,8 @@ function disposeView(rec) {
   if (!view) return;
   view.renderer.dispose();
   view.renderer.domElement.remove();
-  for (const part of view.parts) {
-    part.points.geometry.dispose();
-    part.points.material.dispose();
-    part.mesh.geometry.dispose();
-    part.mesh.material.dispose();
-  }
+  view.points.geometry.dispose();
+  view.points.material.dispose();
   rec.view = null;
 }
 
@@ -982,7 +1098,7 @@ export function createBrainPanel(container) {
   brainPane.addEventListener('wheel', (event) => {
     if (rec.tab !== 'brain') return;
     event.preventDefault();
-    rec.orbit.radius = Math.max(2.2, Math.min(10, rec.orbit.radius * Math.exp(event.deltaY * 0.0011)));
+    rec.orbit.radius = Math.max(1.7, Math.min(8, rec.orbit.radius * Math.exp(event.deltaY * 0.0011)));
   }, { passive: false });
 
   return root;

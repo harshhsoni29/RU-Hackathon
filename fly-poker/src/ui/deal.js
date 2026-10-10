@@ -8,7 +8,7 @@
  */
 
 import * as THREE from 'three';
-import { releaseHand } from './chips.js';
+import { releaseHand, syncStacks } from './chips.js';
 import { bindThree, cardBackTexture, cardTexture } from './textures.js';
 
 const CARD_W = 0.26;
@@ -141,14 +141,20 @@ function boardAnchor(layer) {
   return passed || { x: 0, y: FELT_Y, z: 0 };
 }
 
+function feltRadii(layer) {
+  const table = layer.deps && layer.deps.table;
+  return {
+    rx: (layer.deps && layer.deps.feltRx) || (table && table.feltRx) || 1.92,
+    rz: (layer.deps && layer.deps.feltRz) || (table && table.feltRz) || 0.96,
+  };
+}
+
 function dealerAnchor(layer) {
   const fn = layer.deps && layer.deps.getDealerWorldPosition;
   const got = typeof fn === 'function' ? readVec(fn()) : null;
   if (got) return got;
   const dealer = layer.deps && layer.deps.dealer && readVec(layer.deps.dealer.position);
-  if (dealer) return dealer;
-  const deck = layer.deps && readVec(layer.deps.deck);
-  return deck || { x: 0, y: FELT_Y, z: -OVAL_RZ };
+  return dealer;
 }
 
 function flyAnchor(layer, id) {
@@ -160,22 +166,57 @@ function flyAnchor(layer, id) {
   return pos || fallbackFly(id);
 }
 
+/**
+ * Shoe on the felt, just in front of Chip. Prefer the beetle's world position
+ * and stop inside the cloth along that ray. With no dealer position, sit at
+ * the south end of the oval, where the higher dealer seat is.
+ */
 function deckPoint(layer) {
-  const deck = layer.deps && readVec(layer.deps.deck);
-  if (deck) return deck;
-  const dealer = dealerAnchor(layer);
   const board = boardAnchor(layer);
-  const dx = board.x - dealer.x;
-  const dz = board.z - dealer.z;
+  const dealer = dealerAnchor(layer);
+  let dx = 0;
+  let dz = -1;
+  if (dealer) {
+    dx = dealer.x - board.x;
+    dz = dealer.z - board.z;
+  }
   const len = Math.hypot(dx, dz) || 1;
-  // A beetle standing off the cloth needs the deck slid onto the felt.
-  // A point that is already the shoe stays put.
-  const pull = len > 1.6 ? Math.min(0.5, len - 1.15) : 0;
+  const ux = dx / len;
+  const uz = dz / len;
+  const { rx, rz } = feltRadii(layer);
+  const feltDist = 1 / Math.hypot(ux / rx, uz / rz);
+  const dist = Math.max(0.4, feltDist - 0.28);
   return {
-    x: dealer.x + (dx / len) * pull,
+    x: board.x + ux * dist,
     y: board.y,
-    z: dealer.z + (dz / len) * pull,
+    z: board.z + uz * dist,
   };
+}
+
+function buildShoe(layer) {
+  const spot = deckPoint(layer);
+  const board = boardAnchor(layer);
+  const shoe = new THREE.Group();
+  shoe.name = 'deck';
+  const back = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.55,
+    map: backTexture(layer.deps),
+  });
+  const face = new THREE.MeshStandardMaterial({ color: 0xf3ead8, roughness: 0.62 });
+  for (let i = 0; i < 10; i++) {
+    const mesh = new THREE.Mesh(cardGeo, [sideMat, sideMat, sideMat, sideMat, face, back]);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.y = CARD_D * (i + 0.5);
+    mesh.rotation.z = (i - 5) * 0.012;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    shoe.add(mesh);
+  }
+  shoe.position.set(spot.x, spot.y, spot.z);
+  shoe.rotation.y = Math.atan2(board.x - spot.x, board.z - spot.z);
+  layer.group.add(shoe);
+  layer.shoe = shoe;
 }
 
 function holeSpot(layer, flyId, index) {
@@ -444,7 +485,7 @@ export function createDealLayer(scene, deps = {}) {
   const group = new THREE.Group();
   group.name = 'deal';
   scene.add(group);
-  return {
+  const layer = {
     scene,
     group,
     deps,
@@ -455,7 +496,10 @@ export function createDealLayer(scene, deps = {}) {
     holeKey: null,
     pumping: false,
     raf: 0,
+    shoe: null,
   };
+  buildShoe(layer);
+  return layer;
 }
 
 export function playDealAnimation(layer, publicState) {
@@ -467,6 +511,7 @@ export function playDealAnimation(layer, publicState) {
 
   if (layer.holeKey !== nextHoleKey) {
     releaseHand(state.handNumber ?? nextHoleKey);
+    syncStacks(state);
     cancelKind(layer, 'hole');
     cancelKind(layer, 'board');
     clearHoles(layer);
@@ -515,4 +560,52 @@ export function playDealAnimation(layer, publicState) {
       else flyBoard(layer, task.card, task.index, task.delay, onDone);
     }
   });
+}
+
+let faceUpQuat = null;
+
+function faceUpQuaternion() {
+  if (faceUpQuat) return faceUpQuat;
+  const m = new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+    new THREE.Vector3(0, 1, 0),
+  );
+  faceUpQuat = new THREE.Quaternion().setFromRotationMatrix(m);
+  return faceUpQuat;
+}
+
+/** mode 'top': every dealt card lies face-up. mode 'rail': holes face their fly; the board stays face-up. */
+export function setCardView(layer, mode) {
+  if (!layer) return;
+  const top = mode === 'top';
+  layer.cardView = top ? 'top' : 'rail';
+  const felt = boardAnchor(layer).y;
+  const quat = faceUpQuaternion();
+  if (layer.holes) {
+    layer.holes.forEach((mesh) => {
+      if (!mesh) return;
+      if (top) {
+        mesh.position.y = felt + 0.02 + (mesh.userData.index || 0) * 0.004;
+        mesh.quaternion.copy(quat);
+        return;
+      }
+      const spot = holeSpot(layer, mesh.userData.flyId, mesh.userData.index || 0);
+      mesh.position.set(spot.x, spot.surface + 0.2, spot.z);
+      aimHole(mesh, spot.flyX - spot.x, spot.flyZ - spot.z, 1, spot.fan);
+    });
+  }
+  const board = layer.board || [];
+  for (let i = 0; i < board.length; i++) {
+    const mesh = board[i];
+    if (!mesh) continue;
+    if (top) {
+      mesh.position.y = felt + 0.02 + i * 0.003;
+      mesh.quaternion.copy(quat);
+      continue;
+    }
+    const spot = boardSpot(layer, mesh.userData.index ?? i);
+    mesh.position.set(spot.x, spot.surface + 0.012 + (i % 5) * 0.003, spot.z);
+    aimBoard(mesh, 1);
+  }
 }
