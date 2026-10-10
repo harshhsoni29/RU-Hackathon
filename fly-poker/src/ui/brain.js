@@ -206,8 +206,8 @@ const CSS = `
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(140px, 1fr) minmax(0, 36%);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 38%);
+  grid-template-rows: minmax(0, 1fr);
   border-radius: 12px;
   overflow: hidden;
   background: #07080d;
@@ -217,11 +217,48 @@ const CSS = `
   position: relative;
   z-index: 2;
   overflow: auto;
+  overscroll-behavior: contain;
   min-height: 0;
   max-height: 100%;
-  padding: 8px 14px 10px;
+  padding: 12px 16px 14px;
   background: rgba(10, 12, 16, 0.94);
-  border-top: 1px solid rgba(235, 238, 250, 0.14);
+  border-left: 1px solid rgba(235, 238, 250, 0.14);
+}
+.fly-brain-live > .fly-brain-part:first-child {
+  margin: 0 0 14px;
+  color: #b9ad9c;
+  font-size: 13px;
+  font-style: italic;
+}
+.fly-brain-live .fly-brain-adapt:not(:empty) {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--fly, #e6c27a);
+  border-radius: 0 8px 8px 0;
+  background: rgba(230, 194, 122, 0.08);
+  font-size: 16px;
+}
+.fly-brain-live .fly-brain-growth { margin: 0 0 16px; }
+.fly-brain-live .fly-brain-growth li {
+  position: relative;
+  margin: 0;
+  padding: 5px 0 5px 14px;
+  border-top: 1px solid rgba(235, 238, 250, 0.08);
+}
+.fly-brain-live .fly-brain-growth li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fly, #e6c27a);
+}
+.fly-brain-now-pane .fly-brain-thought { margin-bottom: 4px; }
+@media (max-width: 760px) {
+  .fly-brain-gl { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 1fr) minmax(0, 40%); }
+  .fly-brain-live { border-left: 0; border-top: 1px solid rgba(235, 238, 250, 0.14); }
 }
 .fly-brain-kicker.live { margin-bottom: 6px; }
 .fly-brain-thought {
@@ -1439,7 +1476,6 @@ function paintCaption(rec, replay) {
     setText(rec.count, '');
     setText(rec.links, 'no section above threshold');
     setText(rec.part, 'No region is flaring. The colors are the resting brain.');
-    setText(rec.path, 'No stage fired on this step.');
     return;
   }
   setText(rec.step, LAYER_TITLE[replay.layer] || '');
@@ -1451,7 +1487,6 @@ function paintCaption(rec, replay) {
       ? `Motor neurons are acting: ${executed}.`
       : (PART_LINE[replay.layer] || ''),
   );
-  setText(rec.path, replay.resting ? firedPath(rec.inspection) : '');
 }
 
 function paintRegions(rec, now) {
@@ -1647,6 +1682,7 @@ function paintChrome(rec) {
   rec.why.textContent = brief.why;
   rec.executed.textContent = brief.executed;
   rec.activations.textContent = brief.activations;
+  rec.path.textContent = firedPath(inspection);
   rec.compare.textContent = compareText(inspection);
   const learned = learnedLines(inspection);
   rec.growth.replaceChildren(...learned.map((line) => {
@@ -1896,9 +1932,11 @@ function selectTab(rec, tab) {
   rec.circuitPane.hidden = tab !== 'circuit';
   rec.brainPane.hidden = tab !== 'brain';
   rec.learnPane.hidden = tab !== 'learning';
+  rec.nowPane.hidden = tab !== 'now';
   rec.tabCircuit.setAttribute('aria-selected', tab === 'circuit' ? 'true' : 'false');
   rec.tabBrain.setAttribute('aria-selected', tab === 'brain' ? 'true' : 'false');
   rec.tabLearn.setAttribute('aria-selected', tab === 'learning' ? 'true' : 'false');
+  rec.tabNow.setAttribute('aria-selected', tab === 'now' ? 'true' : 'false');
   if (tab === 'brain' && !rec.root.hidden) startLoop(rec);
   else stopLoop(rec);
   if (tab === 'circuit') requestAnimationFrame(() => renderCircuit(rec));
@@ -1975,7 +2013,12 @@ export function createBrainPanel(container) {
   tabLearn.textContent = 'Learning';
   tabLearn.setAttribute('role', 'tab');
   tabLearn.setAttribute('aria-selected', 'false');
-  tabs.append(tabCircuit, tabBrain, tabLearn);
+  const tabNow = document.createElement('button');
+  tabNow.type = 'button';
+  tabNow.textContent = 'Right now';
+  tabNow.setAttribute('role', 'tab');
+  tabNow.setAttribute('aria-selected', 'false');
+  tabs.append(tabCircuit, tabBrain, tabNow, tabLearn);
 
   const stage = document.createElement('div');
   stage.className = 'fly-brain-stage';
@@ -2068,8 +2111,12 @@ export function createBrainPanel(container) {
   growth.append(waiting);
   const adapt = document.createElement('p');
   adapt.className = 'fly-brain-adapt';
-  live.append(thoughtKicker, thought, hand, why, executed, activations, part, toneNote, path, compareKicker, compare, growthKicker, growth, adapt);
+  live.append(part, growthKicker, adapt, growth, compareKicker, compare);
   brainPane.append(viewHost, live);
+  const nowPane = document.createElement('div');
+  nowPane.className = 'fly-brain-pane fly-brain-learn-pane fly-brain-now-pane';
+  nowPane.hidden = true;
+  nowPane.append(thoughtKicker, thought, hand, why, executed, activations, toneNote, path);
   const learnPane = document.createElement('div');
   learnPane.className = 'fly-brain-pane fly-brain-learn-pane';
   learnPane.hidden = true;
@@ -2106,7 +2153,7 @@ export function createBrainPanel(container) {
   history.className = 'fly-brain-history';
   history.append(historyItem('Nothing has been learned yet.'));
   learnPane.append(profileKicker, compareRow, radar, profileNote, historyKicker, historyCompare, handsKicker, history);
-  stage.append(circuitPane, brainPane, learnPane);
+  stage.append(circuitPane, brainPane, nowPane, learnPane);
 
   const learn = document.createElement('p');
   learn.className = 'fly-brain-learn';
@@ -2125,6 +2172,8 @@ export function createBrainPanel(container) {
     tabCircuit,
     tabBrain,
     tabLearn,
+    tabNow,
+    nowPane,
     circuitPane,
     circuitEmpty,
     svg: board,
@@ -2168,6 +2217,7 @@ export function createBrainPanel(container) {
   tabCircuit.addEventListener('click', () => selectTab(rec, 'circuit'));
   tabBrain.addEventListener('click', () => selectTab(rec, 'brain'));
   tabLearn.addEventListener('click', () => selectTab(rec, 'learning'));
+  tabNow.addEventListener('click', () => selectTab(rec, 'now'));
   comparePick.addEventListener('change', () => paintRadar(rec));
   if (typeof ResizeObserver === 'function') {
     const watcher = new ResizeObserver(() => {

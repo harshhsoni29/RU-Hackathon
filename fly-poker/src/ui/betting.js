@@ -2,8 +2,10 @@
 //
 // There is no separate betting screen any more. panels.js builds one column per fly in the
 // dock: a bet card on top ([data-bet-seat="N"]) and the fly's name plate underneath. This module
-// fills those bet cards with live odds + a one-click "Bet" button, and adds a bankroll / chip
-// picker to the dock ([data-bet-bar]) and the round status to the header ([data-betline]).
+// fills those bet cards with the house's fixed odds, a one-click "Bet" button and a "−" to take
+// money back, and adds a bankroll / chip picker / "Clear bets" to the dock ([data-bet-bar]) and
+// the round status to the header ([data-betline]). A winning bet pays stake x odds (split pots
+// divide that by the number of winners).
 //
 //   import { initBetting } from './ui/betting.js';
 //   const betting = initBetting({ playerNames: FLIES.map((f) => f.name) });
@@ -146,10 +148,8 @@ export function initBetting(options = {}) {
     const staked = state.myBets.reduce((s, b) => s + b.amount, 0);
     const paid = state.myBets.reduce((s, b) => s + (b.payout || 0), 0);
     const winners = (r.winner_seats || []).map((s) => r.players[s - 1].name).join(' & ');
-    if (r.status === 'cancelled' || state.myBets.every((b) => b.status === 'refunded')) {
-      const called = r.status === 'cancelled';
-      state.result = { kind: 'refund', title: called ? 'Hand called off' : 'No winning bets', big: money(staked),
-        sub: called ? 'Your stake is back in your bankroll.' : (winners || 'The winner') + ' took the pot, but nobody backed them. Stakes refunded.' };
+    if (r.status === 'cancelled') {
+      state.result = { kind: 'refund', title: 'Hand called off', big: money(staked), sub: 'Your stake is back in your bankroll.' };
     } else {
       const net = paid - staked;
       const tail = winners + ' took the pot.' + (paid > 0 ? ' ' + money(paid) + ' paid out.' : '');
@@ -181,6 +181,18 @@ export function initBetting(options = {}) {
       state.round = r.round;
       await loadMyBets();
       say(money(state.stake) + ' on ' + nameOf(seat) + '. Good luck.', 'ok');
+    } catch (e) { say(e.message, 'err'); }
+  }
+
+  // Take money back while the window is open: `amount` off one fly, a whole fly, or (no seat) everything.
+  async function withdraw(seat, amount) {
+    if (!isOpen()) return;
+    try {
+      const r = await api('/rounds/' + state.round.id + '/withdraw', { method: 'POST', body: { seat, amount } });
+      state.balance = r.balance;
+      state.round = r.round;
+      await loadMyBets();
+      say(money(r.withdrawn) + (seat ? ' taken off ' + nameOf(seat) : ' back: all bets cleared') + '.', 'ok');
     } catch (e) { say(e.message, 'err'); }
   }
 
@@ -400,9 +412,13 @@ export function initBetting(options = {}) {
   const timerBox = el('div', 'bet-timer');
   timerBox.append(el('span', 'bet-timer-label', 'Bets close in'), timerNum, timerBar, skipBtn);
 
+  const clearBtn = el('button', 'bet-clear', 'Clear bets');
+  clearBtn.type = 'button';
+  clearBtn.addEventListener('click', () => withdraw());
+
   // everything that slides away between windows
   const panel = el('div', 'bet-panel');
-  panel.append(timerBox, chipRow, rebuyBtn);
+  panel.append(timerBox, chipRow, clearBtn, rebuyBtn);
 
   // the "!" shown during auto-play when a new bet can be placed
   const SVG = 'http://www.w3.org/2000/svg';
@@ -472,14 +488,22 @@ export function initBetting(options = {}) {
     if (!slot._bet) {
       const odds = el('span', 'bet-odds');
       const pool = el('span', 'bet-pool');
-      const mine = el('span', 'bet-mine');
+      const mineText = el('span');
+      const less = el('button', 'bet-less', '−');
+      less.type = 'button';
+      less.addEventListener('click', () => {
+        const staked = state.myBets.filter((b) => b.seat === seat).reduce((s, b) => s + b.amount, 0);
+        withdraw(seat, Math.min(state.stake, staked));
+      });
+      const mine = el('div', 'bet-mine');
+      mine.append(mineText, less);
       const btn = el('button', 'bet-btn');
       btn.type = 'button';
       btn.addEventListener('click', () => placeBet(seat));
       const head = el('div', 'bet-head');
       head.append(odds, pool);
       slot.append(head, btn, mine);
-      slot._bet = { odds, pool, mine, btn };
+      slot._bet = { odds, pool, mine, mineText, less, btn };
     }
     return slot;
   }
@@ -506,7 +530,6 @@ export function initBetting(options = {}) {
         : 'Round called off';
       const bits = [label];
       if (left !== null) bits.push(left + 's');
-      if (r && r.total_pool) bits.push('Bet pool ' + money(r.total_pool));
       betline.textContent = bits.join(' · ');
       betline.dataset.phase = phase;
     }
@@ -521,6 +544,7 @@ export function initBetting(options = {}) {
     });
     const broke = state.online && state.balance < MIN_BET && !hasActiveBets();
     rebuyBtn.hidden = !broke;
+    clearBtn.hidden = !(open && total);
     alertBtn.hidden = ui.phase !== 'prompt';
     panel.toggleAttribute('inert', ui.phase !== 'open');
 
@@ -534,9 +558,14 @@ export function initBetting(options = {}) {
       if (!slot) continue;
       const c = slot._bet;
       const info = r && r.players && r.players[seat - 1];
-      c.odds.textContent = info && info.odds ? info.odds.toFixed(2) + 'x' : '–';
-      c.pool.textContent = info && info.pool ? money(info.pool) + ' backed' : 'No bets yet';
-      c.mine.textContent = mineBySeat[seat] ? 'Your bet ' + money(mineBySeat[seat]) : '';
+      const odds = info && info.odds;
+      const pays = (stake) => money(Math.floor(stake * Math.round(odds * 100) / 100));
+      c.odds.textContent = odds ? odds.toFixed(2) : '–';
+      c.pool.textContent = odds ? money(state.stake) + ' pays ' + pays(state.stake) : '';
+      c.mineText.textContent = mineBySeat[seat] ? 'Your bet ' + money(mineBySeat[seat]) + (odds ? ' · pays ' + pays(mineBySeat[seat]) : '') : '';
+      c.mine.hidden = !mineBySeat[seat];
+      c.less.disabled = !open;
+      c.less.setAttribute('aria-label', 'Take ' + money(Math.min(state.stake, mineBySeat[seat] || 0)) + ' off ' + nameOf(seat));
       slot.classList.toggle('has-mine', !!mineBySeat[seat]);
       slot.toggleAttribute('inert', ui.phase !== 'open');
 

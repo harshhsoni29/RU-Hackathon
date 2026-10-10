@@ -1,15 +1,16 @@
 """
 Poker betting backend template (FastAPI + SQLite)
 
-Pari-mutuel betting on the poker players (NUM_PLAYERS seats, default 5):
-  - All bets for a round go into one pool.
-  - The house takes a rake (RAKE_BPS, basis points) off the top.
-  - The remaining pool is shared among bettors who backed the winning player(s),
-    proportional to their stake.
-  - Ties / split pots are supported (several winning seats share the pool equally).
-  - If nobody backed a winner, or every bet was on a winner, all stakes are refunded.
+Fixed-odds "who wins the hand" betting on the poker players (NUM_PLAYERS seats, default 5),
+the way a sportsbook prices a poker broadcast:
+  - When a round opens, the house posts decimal odds for every seat. They are priced from each
+    player's smoothed win rate in past settled rounds, with a house margin (MARGIN_BPS) built in.
+  - Odds are fixed for the whole round, so every bet knows its payout up front.
+  - A winning bet pays stake x odds. A losing bet loses the stake.
+  - Split pots use the dead-heat rule: with k winners, a winning bet pays stake x odds / k.
+  - While betting is open, a bettor can take money off any bet or clear all of their bets.
 
-All money is stored as integer cents. Never use floats for money.
+All money is stored as integer cents and odds as integer hundredths. Never use floats for money.
 
 Round lifecycle:   open  ->  locked  ->  settled
                      \\________________->  cancelled (refunds everyone)
@@ -34,7 +35,9 @@ from pydantic import BaseModel, Field
 # --------------------------------------------------------------------------- #
 DB_PATH = os.getenv("DB_PATH", "betting.db")
 ENGINE_API_KEY = os.getenv("ENGINE_API_KEY", "dev-engine-key")  # shared secret with poker engine
-RAKE_BPS = int(os.getenv("RAKE_BPS", "500"))                    # 500 = 5%
+MARGIN_BPS = int(os.getenv("MARGIN_BPS", "500"))                # house margin in the odds, 500 = 5%
+ODDS_PRIOR = 3                                                  # pseudo-wins per seat before history counts
+ODDS_HISTORY = 200                                              # settled rounds used to price the odds
 MIN_BET = 100                                                   # $1.00
 MAX_BET = 1_000_000                                             # $10,000.00
 NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "5"))                # seats at the table (the fly table seats 5)
@@ -66,7 +69,8 @@ CREATE TABLE IF NOT EXISTS rounds (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     status        TEXT NOT NULL DEFAULT 'open',      -- open|locked|settled|cancelled
     players       TEXT NOT NULL,                     -- JSON list of player names (seat = index+1)
-    rake_bps      INTEGER NOT NULL,
+    rake_bps      INTEGER NOT NULL,                  -- house margin built into the odds
+    odds          TEXT,                              -- JSON list of decimal odds x100 per seat, fixed at open
     closes_at     REAL,                              -- optional unix ts: betting auto-closes
     winner_seats  TEXT,                              -- JSON list, set on settle
     house_take    INTEGER NOT NULL DEFAULT 0,
@@ -88,7 +92,7 @@ CREATE TABLE IF NOT EXISTS ledger (                  -- append-only audit trail
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,
     delta       INTEGER NOT NULL,
-    kind        TEXT NOT NULL,                       -- deposit|bet|payout|refund
+    kind        TEXT NOT NULL,                       -- deposit|bet|withdraw|payout|refund
     ref         TEXT,
     created_at  REAL NOT NULL
 );
@@ -98,6 +102,8 @@ CREATE TABLE IF NOT EXISTS ledger (                  -- append-only audit trail
 def init_db() -> None:
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
+    if "odds" not in {c[1] for c in conn.execute("PRAGMA table_info(rounds)")}:
+        conn.execute("ALTER TABLE rounds ADD COLUMN odds TEXT")
     conn.close()
 
 
@@ -148,42 +154,41 @@ def pool_totals(bets: List[dict]) -> Dict[int, int]:
     return totals
 
 
-def compute_payouts(bets: List[dict], winner_seats: List[int], rake_bps: int):
+def price_odds(wins: List[float], hands: int, margin_bps: int) -> List[int]:
+    """Decimal odds x100 per seat from win counts (split pots count 1/k per winner).
+    A Laplace-style prior keeps early odds near even, and the margin makes the implied
+    probabilities sum to 1 + margin, which is the house edge."""
+    n = len(wins)
+    probs = [(w + ODDS_PRIOR) / (hands + ODDS_PRIOR * n) for w in wins]
+    return [max(101, int(10_000 / (p * (10_000 + margin_bps)) * 100)) for p in probs]
+
+
+def compute_payouts(bets: List[dict], winner_seats: List[int], odds: List[int]):
     """
-    bets: [{"id", "seat", "amount"}, ...]
-    Returns (payouts {bet_id: cents}, house_take_cents, outcome)
-    outcome is "settled" or "refunded".
+    bets: [{"id", "seat", "amount"}, ...], odds: decimal odds x100 per seat (seat = index + 1)
+    Returns (payouts {bet_id: cents}, house_take_cents). house_take is negative when the house loses.
     """
-    total = sum(b["amount"] for b in bets)
-    pools = pool_totals(bets)
-    winning_seats = sorted(s for s in set(winner_seats) if pools[s] > 0)
-    winning_pool = sum(pools[s] for s in winning_seats)
-
-    # Nobody backed a winner, or everyone did -> nothing to win/lose: refund.
-    if not winning_seats or winning_pool == total:
-        return {b["id"]: b["amount"] for b in bets}, 0, "refunded"
-
-    rake = total * rake_bps // 10_000
-    distributable = total - rake
-    per_winning_seat = distributable // len(winning_seats)   # ties split equally
-
-    payouts = {b["id"]: 0 for b in bets}
-    for b in bets:
-        if b["seat"] in winning_seats:
-            payouts[b["id"]] = per_winning_seat * b["amount"] // pools[b["seat"]]
-
-    house_take = total - sum(payouts.values())               # rake + rounding dust
-    return payouts, house_take, "settled"
-
-
-def current_odds(pools: Dict[int, int], rake_bps: int) -> Dict[int, Optional[float]]:
-    """Decimal odds if that seat won right now (display only; odds move as bets arrive)."""
-    total = sum(pools.values())
-    distributable = total - total * rake_bps // 10_000
-    return {
-        seat: round(distributable / pool, 2) if pool > 0 else None
-        for seat, pool in pools.items()
+    winners = set(winner_seats)
+    payouts = {
+        b["id"]: b["amount"] * odds[b["seat"] - 1] // (100 * len(winners)) if b["seat"] in winners else 0
+        for b in bets
     }
+    return payouts, sum(b["amount"] for b in bets) - sum(payouts.values())
+
+
+def odds_for(conn, players: List[str]) -> List[int]:
+    """Price a new round from the recent results of these players (matched by name)."""
+    wins = {name: 0.0 for name in players}
+    hands = 0
+    for r in conn.execute("SELECT players, winner_seats FROM rounds WHERE status='settled' "
+                          "ORDER BY id DESC LIMIT ?", (ODDS_HISTORY,)):
+        names, seats = json.loads(r["players"]), json.loads(r["winner_seats"] or "[]")
+        if sorted(names) != sorted(players) or not seats:
+            continue
+        hands += 1
+        for s in seats:
+            wins[names[s - 1]] += 1 / len(seats)
+    return price_odds([wins[name] for name in players], hands, MARGIN_BPS)
 
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +227,11 @@ class BetCreate(BaseModel):
     amount: int = Field(ge=MIN_BET, le=MAX_BET, description="cents")
 
 
+class Withdraw(BaseModel):
+    seat: Optional[int] = Field(None, ge=1, le=NUM_PLAYERS, description="omit to clear every seat")
+    amount: Optional[int] = Field(None, gt=0, description="cents; omit to take the whole stake")
+
+
 class SettleRequest(BaseModel):
     winner_seats: List[int] = Field(min_length=1, max_length=NUM_PLAYERS,
                                     description="seat numbers 1..NUM_PLAYERS; multiple on a split pot")
@@ -241,7 +251,7 @@ def round_view(conn, r) -> dict:
     bets = [dict(b) for b in conn.execute(
         "SELECT id, seat, amount FROM bets WHERE round_id = ?", (r["id"],))]
     pools = pool_totals(bets)
-    odds = current_odds(pools, r["rake_bps"])
+    odds = json.loads(r["odds"]) if r["odds"] else [None] * NUM_PLAYERS
     players = json.loads(r["players"])
     return {
         "id": r["id"],
@@ -250,7 +260,8 @@ def round_view(conn, r) -> dict:
         "winner_seats": json.loads(r["winner_seats"]) if r["winner_seats"] else None,
         "total_pool": sum(pools.values()),
         "players": [
-            {"seat": s, "name": players[s - 1], "pool": pools[s], "odds": odds[s]}
+            {"seat": s, "name": players[s - 1], "pool": pools[s],
+             "odds": odds[s - 1] / 100 if odds[s - 1] else None}
             for s in range(1, NUM_PLAYERS + 1)
         ],
     }
@@ -336,15 +347,19 @@ def read_round(round_id: int):
 # --------------------------------------------------------------------------- #
 # Betting (users)
 # --------------------------------------------------------------------------- #
+def open_round(conn, round_id: int):
+    r = get_round(conn, round_id)
+    if r["status"] != "open":
+        raise HTTPException(409, f"Betting closed (round is {r['status']})")
+    if r["closes_at"] and time.time() >= r["closes_at"]:
+        raise HTTPException(409, "Betting window has ended")
+    return r
+
+
 @app.post("/bets")
 def place_bet(body: BetCreate, user_id: int = Depends(current_user_id)):
     with tx() as conn:
-        r = get_round(conn, body.round_id)
-        if r["status"] != "open":
-            raise HTTPException(409, f"Betting closed (round is {r['status']})")
-        if r["closes_at"] and time.time() >= r["closes_at"]:
-            raise HTTPException(409, "Betting window has ended")
-
+        r = open_round(conn, body.round_id)
         change_balance(conn, user_id, -body.amount, "bet", f"round:{body.round_id}")
         cur = conn.execute(
             "INSERT INTO bets (round_id, user_id, seat, amount, created_at) VALUES (?,?,?,?,?)",
@@ -352,6 +367,39 @@ def place_bet(body: BetCreate, user_id: int = Depends(current_user_id)):
         )
         bal = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()[0]
         return {"bet_id": cur.lastrowid, "balance": bal, "round": round_view(conn, r)}
+
+
+@app.post("/rounds/{round_id}/withdraw")
+def withdraw(round_id: int, body: Withdraw, user_id: int = Depends(current_user_id)):
+    """While betting is open, take money back off your bets: part of one seat's stake,
+    a whole seat, or (no seat) everything. Newest bets are trimmed first."""
+    with tx() as conn:
+        r = open_round(conn, round_id)
+        sql, args = "SELECT id, amount FROM bets WHERE round_id=? AND user_id=?", [round_id, user_id]
+        if body.seat is not None:
+            sql += " AND seat=?"
+            args.append(body.seat)
+        bets = conn.execute(sql + " ORDER BY id DESC", args).fetchall()
+        staked = sum(b["amount"] for b in bets)
+        if not staked:
+            raise HTTPException(404, "No bets to take back")
+        want = staked if body.amount is None else body.amount
+        if want > staked:
+            raise HTTPException(400, "That is more than you have on it")
+
+        left = want
+        for b in bets:
+            if not left:
+                break
+            take = min(left, b["amount"])
+            if take == b["amount"]:
+                conn.execute("DELETE FROM bets WHERE id=?", (b["id"],))
+            else:
+                conn.execute("UPDATE bets SET amount=amount-? WHERE id=?", (take, b["id"]))
+            left -= take
+        change_balance(conn, user_id, want, "withdraw", f"round:{round_id}")
+        bal = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()[0]
+        return {"withdrawn": want, "balance": bal, "round": round_view(conn, r)}
 
 
 # --------------------------------------------------------------------------- #
@@ -362,8 +410,9 @@ def create_round(body: RoundCreate):
     """Engine calls this when a new hand/game is about to start; opens betting."""
     with tx() as conn:
         cur = conn.execute(
-            "INSERT INTO rounds (players, rake_bps, closes_at, created_at) VALUES (?,?,?,?)",
-            (json.dumps(body.players), RAKE_BPS, body.closes_at, time.time()),
+            "INSERT INTO rounds (players, rake_bps, odds, closes_at, created_at) VALUES (?,?,?,?,?)",
+            (json.dumps(body.players), MARGIN_BPS, json.dumps(odds_for(conn, body.players)),
+             body.closes_at, time.time()),
         )
         return round_view(conn, get_round(conn, cur.lastrowid))
 
@@ -392,27 +441,22 @@ def settle_round(round_id: int, body: SettleRequest):
 
         bets = [dict(b) for b in conn.execute(
             "SELECT id, user_id, seat, amount FROM bets WHERE round_id=?", (round_id,))]
-        payouts, house_take, outcome = compute_payouts(
-            bets, body.winner_seats, r["rake_bps"])
+        odds = json.loads(r["odds"]) if r["odds"] else odds_for(conn, json.loads(r["players"]))
+        payouts, house_take = compute_payouts(bets, body.winner_seats, odds)
 
         winners = set(body.winner_seats)
         for b in bets:
             pay = payouts[b["id"]]
-            if outcome == "refunded":
-                status = "refunded"
-            else:
-                status = "won" if b["seat"] in winners else "lost"
+            status = "won" if b["seat"] in winners else "lost"
             conn.execute("UPDATE bets SET payout=?, status=? WHERE id=?", (pay, status, b["id"]))
             if pay > 0:
-                change_balance(conn, b["user_id"], pay,
-                               "refund" if outcome == "refunded" else "payout",
-                               f"round:{round_id}:bet:{b['id']}")
+                change_balance(conn, b["user_id"], pay, "payout", f"round:{round_id}:bet:{b['id']}")
 
         conn.execute(
             "UPDATE rounds SET status='settled', winner_seats=?, house_take=? WHERE id=?",
             (json.dumps(sorted(winners)), house_take, round_id),
         )
-        return {"outcome": outcome, "house_take": house_take,
+        return {"outcome": "settled", "house_take": house_take,
                 "round": round_view(conn, get_round(conn, round_id))}
 
 

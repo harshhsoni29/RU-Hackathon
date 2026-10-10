@@ -18,47 +18,41 @@ def bet(i, seat, amount):
     return {"id": i, "seat": seat, "amount": amount}
 
 
-def test_single_winner_pari_mutuel():
-    bets = [bet(1, 1, 1000), bet(2, 1, 3000), bet(3, 2, 6000)]
-    payouts, house, outcome = main.compute_payouts(bets, [1], 500)
-    assert outcome == "settled"
-    assert payouts == {1: 2375, 2: 7125, 3: 0}   # 9500 distributable, split 1:3
-    assert house == 500
+ODDS = [250, 400, 500, 800, 1200]   # decimal odds x100 for seats 1..5
 
 
-def test_split_pot_shares_pool_equally_between_winning_seats():
+def test_winning_bet_pays_stake_times_odds():
+    bets = [bet(1, 1, 1000), bet(2, 2, 3000)]
+    payouts, house = main.compute_payouts(bets, [1], ODDS)
+    assert payouts == {1: 2500, 2: 0}
+    assert house == 4000 - 2500
+
+
+def test_lone_bettor_on_winner_still_wins():
+    payouts, house = main.compute_payouts([bet(1, 3, 500)], [3], ODDS)
+    assert payouts == {1: 2500} and house == -2000
+
+
+def test_split_pot_uses_dead_heat_rule():
     bets = [bet(1, 1, 2000), bet(2, 2, 2000), bet(3, 3, 6000)]
-    payouts, house, _ = main.compute_payouts(bets, [1, 2], 0)
-    assert payouts == {1: 5000, 2: 5000, 3: 0}
-    assert house == 0
-
-
-def test_no_bets_on_winner_refunds_everyone():
-    bets = [bet(1, 1, 1000), bet(2, 2, 2000)]
-    payouts, house, outcome = main.compute_payouts(bets, [5], 500)
-    assert outcome == "refunded" and house == 0
-    assert payouts == {1: 1000, 2: 2000}
-
-
-def test_everyone_on_winner_refunds_without_rake():
-    bets = [bet(1, 4, 1000), bet(2, 4, 2000)]
-    payouts, _, outcome = main.compute_payouts(bets, [4], 500)
-    assert outcome == "refunded"
-    assert payouts == {1: 1000, 2: 2000}
+    payouts, _ = main.compute_payouts(bets, [1, 2], ODDS)
+    assert payouts == {1: 2500, 2: 4000, 3: 0}
 
 
 @pytest.mark.parametrize("amounts", [(333, 777, 1001), (101, 103, 107), (999999, 1, 1)])
 def test_money_is_conserved(amounts):
     bets = [bet(1, 1, amounts[0]), bet(2, 1, amounts[1]), bet(3, 2, amounts[2])]
-    payouts, house, _ = main.compute_payouts(bets, [1], 500)
+    payouts, house = main.compute_payouts(bets, [1], ODDS)
     assert sum(payouts.values()) + house == sum(amounts)
     assert all(p >= 0 for p in payouts.values())
 
 
-def test_odds_display():
-    pools = {1: 4000, 2: 6000, 3: 0, 4: 0, 5: 0}
-    odds = main.current_odds(pools, 500)
-    assert odds[1] == 2.38 and odds[2] == 1.58 and odds[3] is None
+def test_odds_start_even_and_follow_win_rate():
+    even = main.price_odds([0] * 5, 0, 500)
+    assert len(set(even)) == 1 and even[0] == 476          # 5-way coin flip less a 5% margin
+    skewed = main.price_odds([30, 10, 5, 3, 2], 50, 500)
+    assert skewed == sorted(skewed)                         # most wins -> shortest price
+    assert sum(1 / (o / 100) for o in skewed) > 1           # implied probabilities include the edge
 
 
 # ----------------------------------------------------------------- API flow
@@ -92,24 +86,65 @@ def balance(client, uid):
     return client.get(f"/users/{uid}").json()["balance"]
 
 
-def test_full_round_pays_winners(client):
-    a, b, c = (make_user(client, n) for n in "abc")
+def test_full_round_pays_winners_at_posted_odds(client):
+    a, b = make_user(client, "a"), make_user(client, "b")
     rid = new_round(client)
-    assert place(client, a, rid, 1, 1000).status_code == 200
-    assert place(client, b, rid, 1, 3000).status_code == 200
-    assert place(client, c, rid, 2, 6000).status_code == 200
-
     view = client.get(f"/rounds/{rid}").json()
-    assert view["total_pool"] == 10_000
-    assert view["players"][0]["pool"] == 4000
+    assert all(p["odds"] == 4.76 for p in view["players"])   # no history yet: even odds
+    assert place(client, a, rid, 1, 1000).status_code == 200
+    assert place(client, b, rid, 2, 3000).status_code == 200
+    assert client.get(f"/rounds/{rid}").json()["players"][0]["pool"] == 1000
 
     assert client.post(f"/rounds/{rid}/lock", headers=ENGINE).status_code == 200
     res = client.post(f"/rounds/{rid}/settle", json={"winner_seats": [1]}, headers=ENGINE).json()
-    assert res["outcome"] == "settled" and res["house_take"] == 500
+    assert res["outcome"] == "settled" and res["house_take"] == 4000 - 4760
 
-    assert balance(client, a) == 10_000 - 1000 + 2375
-    assert balance(client, b) == 10_000 - 3000 + 7125
-    assert balance(client, c) == 10_000 - 6000
+    assert balance(client, a) == 10_000 - 1000 + 4760
+    assert balance(client, b) == 10_000 - 3000
+
+
+def test_odds_shorten_for_a_winning_player(client):
+    for _ in range(5):
+        rid = new_round(client)
+        client.post(f"/rounds/{rid}/settle", json={"winner_seats": [2]}, headers=ENGINE)
+    odds = [p["odds"] for p in client.get(f"/rounds/{new_round(client)}").json()["players"]]
+    assert odds[1] < odds[0] == odds[2]
+
+
+def withdraw(client, uid, rid, **body):
+    return client.post(f"/rounds/{rid}/withdraw", json=body, headers={"X-User-Id": str(uid)})
+
+
+def test_take_money_off_a_bet(client):
+    u = make_user(client, "w")
+    rid = new_round(client)
+    place(client, u, rid, 1, 500)
+    place(client, u, rid, 1, 2500)
+    r = withdraw(client, u, rid, seat=1, amount=1000)
+    assert r.status_code == 200 and r.json()["round"]["players"][0]["pool"] == 2000
+    assert balance(client, u) == 10_000 - 2000
+    assert withdraw(client, u, rid, seat=1, amount=5000).status_code == 400
+    assert withdraw(client, u, rid, seat=2).status_code == 404
+
+
+def test_clear_all_bets(client):
+    u, other = make_user(client, "c"), make_user(client, "o")
+    rid = new_round(client)
+    place(client, u, rid, 1, 500)
+    place(client, u, rid, 4, 2500)
+    place(client, other, rid, 4, 1000)
+    assert withdraw(client, u, rid).json()["withdrawn"] == 3000
+    assert balance(client, u) == 10_000
+    assert client.get(f"/rounds/{rid}").json()["total_pool"] == 1000   # other bettors untouched
+
+
+def test_cannot_withdraw_after_lock(client):
+    u = make_user(client, "lk")
+    rid = new_round(client)
+    place(client, u, rid, 1, 500)
+    client.post(f"/rounds/{rid}/lock", headers=ENGINE)
+    assert withdraw(client, u, rid).status_code == 409
+    assert balance(client, u) == 10_000 - 500
 
 
 def test_latest_round_endpoint(client):

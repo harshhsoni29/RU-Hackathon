@@ -39,17 +39,27 @@ export function mountBetView(view, { getDealModule, getDealLayer } = {}) {
     }
   }
 
+  const header = document.querySelector('#hud .top');
+  const dockEl = document.querySelector('#hud .dock');
+
+  // Fit the table, the flies and their name tags into the strip of screen between the header and
+  // the dock, so the HUD never covers a seat.
   function applyTop() {
     const aspect = camera.aspect > 0.05 ? camera.aspect : 1;
-    const halfX = Math.max(TABLE.apronRx, TABLE.feltRx) + 1.15;
-    const halfZ = Math.max(TABLE.apronRz, TABLE.feltRz) + 0.85;
+    const H = window.innerHeight || 1;
+    const top = header ? header.getBoundingClientRect().bottom : 0;
+    const bottom = dockEl ? H - dockEl.getBoundingClientRect().top : 0;
+    const band = Math.max(0.3, (H - top - bottom) / H);
+    const halfX = Math.max(TABLE.apronRx, TABLE.feltRx) + 1.5;
+    const halfZ = Math.max(TABLE.apronRz, TABLE.feltRz) + 1.3;
     const fov = 62;
     const tan = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
-    const dist = Math.max(halfZ / tan, halfX / (tan * aspect)) + 0.35;
+    const dist = Math.max(halfZ / (tan * band), halfX / (tan * aspect)) + 0.35;
+    const shiftZ = ((bottom - top) / H) * tan * dist;
     camera.fov = fov;
     camera.up.set(0, 0, -1);
-    camera.position.set(TABLE.x, TABLE.top + dist, TABLE.z);
-    camera.lookAt(TABLE.x, TABLE.top, TABLE.z);
+    camera.position.set(TABLE.x, TABLE.top + dist, TABLE.z + shiftZ);
+    camera.lookAt(TABLE.x, TABLE.top, TABLE.z + shiftZ);
     camera.updateProjectionMatrix();
     if (lampGroup) lampGroup.visible = false;
     setBeams(false);
