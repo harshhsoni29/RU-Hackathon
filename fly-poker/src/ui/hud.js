@@ -19,17 +19,18 @@ function esc(value) {
   }[ch]));
 }
 
-function formatAction(ev, name) {
-  const who = name || ev.flyId || 'Someone';
-  const amount = ev.amount ? ` ${ev.amount}` : '';
-  if (ev.action === 'raise') return `${who} raises to ${ev.raiseTo ?? ev.amount ?? ''}`.trim();
-  if (ev.action === 'bet') return `${who} bets${amount}`;
-  if (ev.action === 'call') return `${who} calls${amount}`;
-  if (ev.action === 'fold') return `${who} folds`;
-  if (ev.action === 'check') return `${who} checks`;
-  if (ev.handEnded) return `${who} ends the hand`;
-  return `${who} ${ev.action || ''}`.trim();
+function actionText(ev) {
+  const amount = ev.amount ? ` <b class="amt">${esc(ev.amount)}</b>` : '';
+  if (ev.action === 'raise') return `raises to <b class="amt">${esc(ev.raiseTo ?? ev.amount ?? '')}</b>`;
+  if (ev.action === 'bet') return `bets${amount}`;
+  if (ev.action === 'call') return `calls${amount}`;
+  if (ev.action === 'fold') return 'folds';
+  if (ev.action === 'check') return 'checks';
+  if (ev.handEnded) return 'ends the hand';
+  return esc(ev.action || '');
 }
+
+const LOG_STORE = 'fly-log-open';
 
 export function mountHud() {
   const root = document.createElement('div');
@@ -51,7 +52,10 @@ export function mountHud() {
         <p class="sub" data-note></p>
       </div>
     </header>
-    <aside class="log" data-log></aside>
+    <aside class="log-drawer" data-log-drawer aria-label="Action log">
+      <button type="button" class="log-tab" data-log-tab aria-controls="action-log"></button>
+      <div class="log" id="action-log" data-log></div>
+    </aside>
     <footer class="dock">
       <div class="dock-top">
         <div class="controls">
@@ -82,6 +86,19 @@ export function mountHud() {
   const reset = root.querySelector('[data-reset]');
   const speed = root.querySelector('[data-speed]');
   const speedLabel = root.querySelector('[data-speed-label]');
+
+  const logDrawer = root.querySelector('[data-log-drawer]');
+  const logTab = root.querySelector('[data-log-tab]');
+  function setLogOpen(open) {
+    logDrawer.classList.toggle('open', open);
+    logTab.textContent = open ? '›' : '‹';
+    logTab.setAttribute('aria-expanded', String(open));
+    logTab.title = open ? 'Hide the action log' : 'Show the action log';
+    log.inert = !open;
+    localStorage.setItem(LOG_STORE, open ? '1' : '0');
+  }
+  logTab.addEventListener('click', () => setLogOpen(!logDrawer.classList.contains('open')));
+  setLogOpen(localStorage.getItem(LOG_STORE) !== '0');
 
   const handlers = { deal: [], next: [], auto: [], reset: [], select: [] };
   deal.addEventListener('click', () => handlers.deal.forEach((fn) => fn()));
@@ -148,22 +165,34 @@ export function mountHud() {
     });
   }
 
+  let shownKey = null;
+  let shownEvents = new Set();
   function paintLog(state) {
-    const names = Object.fromEntries((state?.seats || []).map((seat) => [seat.id, seat.name]));
-    const events = state?.lastActions || [];
+    const seats = Object.fromEntries((state?.seats || []).map((seat) => [seat.id, seat]));
+    const events = (state?.lastActions || []).slice(-14);
+    const ids = events.map((ev, i) => `${ev.handNumber}:${ev.seq ?? i}:${ev.flyId}:${ev.action}`);
+    const key = ids.join('|');
+    if (key === shownKey) return;
+    shownKey = key;
+    const seen = shownEvents;
+    shownEvents = new Set(ids);
     if (!events.length) {
       log.innerHTML = '<p class="log-title">Action log</p><p class="empty">No actions yet. Deal a hand.</p>';
       return;
     }
     const rows = ['<p class="log-title">Action log</p>'];
     let hand = null;
-    for (const ev of events.slice(-14)) {
+    events.forEach((ev, i) => {
       if (ev.handNumber !== hand) {
         hand = ev.handNumber;
-        rows.push(`<p class="hand-break">Hand ${esc(hand)}</p>`);
+        rows.push(`<p class="hand-break"><span>Hand ${esc(hand)}</span></p>`);
       }
-      rows.push(`<p><span class="st">${esc(ev.street || '')}</span> ${esc(formatAction(ev, names[ev.flyId]))}</p>`);
-    }
+      const seat = seats[ev.flyId];
+      const accent = seat ? seat.colorHex || `#${Number(seat.color || 0).toString(16).padStart(6, '0')}` : 'var(--ink)';
+      rows.push(`<p class="log-row${seen.has(ids[i]) ? '' : ' fresh'}" data-act="${ev.handEnded ? 'win' : esc(ev.action || '')}">`
+        + `<b class="who" style="color:${esc(accent)}">${esc(seat?.name || ev.flyId || 'Someone')}</b> ${actionText(ev)}`
+        + `<span class="st">${esc(ev.street || '')}</span></p>`);
+    });
     log.innerHTML = rows.join('');
     log.scrollTop = log.scrollHeight;
   }

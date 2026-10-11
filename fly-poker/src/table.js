@@ -231,6 +231,7 @@ export function createTable(config = {}) {
     policyCompare: {
       decisions: 0,
       disagreements: 0,
+      drift: 0,
       lastLive: null,
       lastFrozen: null,
       since: null,
@@ -374,6 +375,19 @@ function mimicView(table, fly) {
   };
 }
 
+/** Total-variation distance between two softmaxes over the legal actions: 0 = identical leanings, 1 = opposite. */
+function oddsGap(a, b, legal) {
+  const odds = (logits) => {
+    const top = Math.max(...legal.map((act) => logits[act]));
+    const e = legal.map((act) => Math.exp(logits[act] - top));
+    const sum = e.reduce((s, v) => s + v, 0);
+    return e.map((v) => v / sum);
+  };
+  const p = odds(a);
+  const q = odds(b);
+  return p.reduce((s, v, i) => s + Math.abs(v - q[i]), 0) / 2;
+}
+
 function notePolicyMove(fly, record, handNumber) {
   if (!fly.policyCompare || fly.policyCompare.since || !record) return;
   const moved = (record.deltas || []).some((row) => {
@@ -438,6 +452,8 @@ export function step(table) {
   const frozen = decide({ ...ctx, brain: fly.frozenBrain, params: fly.mimic ? ctx.params : fly.frozenParams });
   fly.policyCompare.decisions += 1;
   if (frozen.action !== applied.action) fly.policyCompare.disagreements += 1;
+  const gap = oddsGap(decision.logits, frozen.logits, legal);
+  fly.policyCompare.drift += (gap - fly.policyCompare.drift) * 0.1;
   fly.policyCompare.lastLive = applied.action;
   fly.policyCompare.lastFrozen = frozen.action;
   if (applied.action === 'bet' || applied.action === 'raise') hand.lastAggressor = seat;
@@ -547,7 +563,7 @@ function finishHand(table, result, showdown) {
     }
     if (vpip) fly.stats.vpipHands += 1;
     if (pfr) fly.stats.pfrHands += 1;
-    rememberProfile(table, fly, table.handNumber);
+    rememberProfile(table, fly, table.handNumber, player.stack, learned);
     notePolicyMove(fly, learned, table.handNumber);
   }
 
@@ -708,6 +724,7 @@ function compareOf(fly) {
   return {
     decisions: compare.decisions || 0,
     disagreements: compare.disagreements || 0,
+    drift: compare.drift || 0,
     lastLive: compare.lastLive || null,
     lastFrozen: compare.lastFrozen || null,
     moved: Boolean(since),
@@ -723,14 +740,21 @@ function unit(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function rememberProfile(table, fly, handNumber) {
+/** One row per hand played: style axes, chips after the hand, total synapse change, and (copycat) follow shares. */
+function rememberProfile(table, fly, handNumber, stack, learned) {
   if (!Array.isArray(fly.profileHistory)) fly.profileHistory = [];
   const profile = strategyProfile(table, fly);
+  const rewire = (learned?.deltas || [])
+    .filter((d) => String(d.parameter).startsWith('gain:'))
+    .reduce((sum, d) => sum + Math.abs(Number(d.delta) || 0), 0);
   fly.profileHistory.push({
     handNumber,
     values: profile.axes.map((axis) => axis.value),
+    stack,
+    rewire,
+    follow: fly.mimic ? followShares(fly.mimic) : null,
   });
-  if (fly.profileHistory.length > 40) fly.profileHistory.shift();
+  if (fly.profileHistory.length > 60) fly.profileHistory.shift();
 }
 
 /** A copycat plays with the parameters of whoever it follows, so its own are a share-weighted blend. */
@@ -759,10 +783,14 @@ function strategyProfile(table, fly) {
   const observedFold = actions ? folds / actions : params.foldToPressure;
   return {
     hands,
+    startStack: table.startingStack,
     source: observed ? 'observed' : 'model',
     history: Array.isArray(fly.profileHistory) ? fly.profileHistory.map((row) => ({
       handNumber: row.handNumber,
       values: row.values.slice(),
+      stack: row.stack,
+      rewire: row.rewire,
+      follow: row.follow ? { ...row.follow } : null,
     })) : [],
     note: observed
       ? 'Aggression, risk, and fold share use this fly’s action counts. Bluff frequency and response to bets stay on the learned parameters. A faded shape is an earlier hand, not a personality score.'

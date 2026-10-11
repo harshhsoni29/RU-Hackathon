@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three';
+import { FLIES } from '../brains/styles.js';
 
 const LAYERS = ['sensory', 'kenyon', 'central', 'descending', 'motor'];
 const SECTION_ID = { sensory: 0, kenyon: 1, central: 2, descending: 3, motor: 4 };
@@ -316,6 +317,19 @@ const CSS = `
   height: 300px;
 }
 .fly-brain-learn-pane .fly-brain-history { flex: 0 0 auto; }
+.fly-insights {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-content: start;
+  gap: 10px 18px;
+}
+.fly-insight { min-width: 0; padding: 8px 0 10px; border-top: 1px solid rgba(230, 194, 122, 0.14); }
+.fly-insight[hidden] { display: none; }
+.fly-insight-chart { display: block; width: 100%; height: 80px; }
+.fly-insight-chart.tall { height: 110px; }
+.fly-insight-chart.short { height: 28px; }
+.fly-insight .fly-brain-radar { flex: none; height: 200px; }
+.fly-insight-note { margin: 6px 0 0; color: #d9cbb8; font-size: 13px; line-height: 1.4; }
 .fly-brain-history {
   margin: 8px 0 0;
   padding: 0;
@@ -1803,7 +1817,7 @@ function paintRadar(rec) {
   g.clearRect(0, 0, w, h);
   const cx = w * 0.5;
   const cy = h * 0.5;
-  const rx = Math.min(w * 0.3, h * 0.34);
+  const rx = Math.min(w * 0.22, h * 0.34);
   const ry = rx;
   const axes = profile.axes;
   const n = axes.length;
@@ -1850,18 +1864,175 @@ function paintRadar(rec) {
     g.textBaseline = Math.sin(ang) > 0.35 ? 'top' : Math.sin(ang) < -0.35 ? 'bottom' : 'middle';
     g.fillText(axis.label, x, y);
   });
-  if (rec.profileNote) {
-    const compared = earlier ? ` Faded shape is hand ${earlier.handNumber}. Solid shape is now.` : '';
-    rec.profileNote.textContent = `${profile.note || ''}${compared}`;
+  if (rec.profileNote) rec.profileNote.textContent = styleShift(axes, earlier);
+}
+
+function styleShift(axes, earlier) {
+  if (!earlier) return 'Pick an earlier hand above to see how its style has shifted.';
+  let best = null;
+  axes.forEach((axis, i) => {
+    const move = axis.value - (earlier.values[i] ?? axis.value);
+    if (!best || Math.abs(move) > Math.abs(best.move)) best = { label: axis.label.toLowerCase(), move };
+  });
+  const since = `Faded shape: hand ${earlier.handNumber}. Solid: now.`;
+  if (!best || Math.abs(best.move) < 0.03) return `${since} Its style has barely moved.`;
+  return `${since} The biggest shift is ${best.move > 0 ? 'more' : 'less'} ${best.label}.`;
+}
+
+/** Size a canvas to its CSS box at device resolution; returns a context and pixel size. */
+function fitChart(canvas) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round((canvas.clientWidth || 300) * dpr));
+  const h = Math.max(1, Math.round((canvas.clientHeight || 90) * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
   }
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  g.font = `${Math.round(11 * dpr)}px Georgia, serif`;
+  return { g, w, h, dpr };
+}
+
+const INK = 'rgba(246, 240, 228, 0.55)';
+
+function paintChips(slot, rows, start, color) {
+  const { g, w, h, dpr } = fitChart(slot.canvas);
+  const stacks = [start, ...rows.map((row) => row.stack).filter(Number.isFinite)];
+  if (stacks.length < 2) {
+    slot.note.textContent = 'Fills in once this fly has played a hand.';
+    return;
+  }
+  const lo = Math.min(...stacks, start) * 0.95;
+  const hi = Math.max(...stacks, start) * 1.05 || 1;
+  const pad = 6 * dpr;
+  const x = (i) => pad + (i / (stacks.length - 1)) * (w - pad * 2);
+  const y = (v) => h - pad - ((v - lo) / (hi - lo || 1)) * (h - pad * 2);
+  g.setLineDash([4 * dpr, 4 * dpr]);
+  g.strokeStyle = INK;
+  g.lineWidth = dpr;
+  g.beginPath();
+  g.moveTo(pad, y(start));
+  g.lineTo(w - pad, y(start));
+  g.stroke();
+  g.setLineDash([]);
+  g.fillStyle = INK;
+  g.textBaseline = 'bottom';
+  g.fillText(`start ${start}`, pad, y(start) - 2 * dpr);
+  g.strokeStyle = color;
+  g.lineWidth = 2.5 * dpr;
+  g.beginPath();
+  stacks.forEach((v, i) => (i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))));
+  g.stroke();
+  const net = stacks[stacks.length - 1] - start;
+  const hands = stacks.length - 1;
+  slot.note.textContent = net === 0
+    ? `Even after ${hands} hand${hands === 1 ? '' : 's'}.`
+    : `${net > 0 ? 'Up' : 'Down'} ${Math.abs(net)} chips over ${hands} hand${hands === 1 ? '' : 's'}.`;
+}
+
+function paintRewire(slot, rows, color) {
+  const { g, w, h, dpr } = fitChart(slot.canvas);
+  const values = rows.map((row) => row.rewire).filter(Number.isFinite);
+  if (!values.length) {
+    slot.note.textContent = 'Each bar will be one hand: taller means its connections changed more.';
+    return;
+  }
+  const top = Math.max(...values) || 1;
+  const gap = 2 * dpr;
+  const bw = Math.max(2 * dpr, (w - gap * (values.length - 1)) / values.length);
+  g.fillStyle = color;
+  values.forEach((v, i) => {
+    const bh = Math.max(dpr, (v / top) * (h - 4 * dpr));
+    g.fillRect(i * (bw + gap), h - bh, bw, bh);
+  });
+  if (values.length < 6) {
+    slot.note.textContent = 'Taller bars mean its connections changed more after that hand.';
+    return;
+  }
+  const third = Math.max(1, Math.floor(values.length / 3));
+  const avg = (list) => list.reduce((s, v) => s + v, 0) / list.length;
+  const early = avg(values.slice(0, third));
+  const late = avg(values.slice(-third));
+  slot.note.textContent = late < early * 0.7
+    ? 'Its brain is settling down: recent hands change it less than early ones did.'
+    : late > early * 1.3
+      ? 'Its brain is changing more than before, so something about the table is surprising it.'
+      : 'Its brain keeps changing at a steady pace as it plays.';
+}
+
+const FLY_COLOR = Object.fromEntries(FLIES.map((fly) => [fly.id, `#${fly.color.toString(16).padStart(6, '0')}`]));
+
+function paintFollow(slot, mimic) {
+  slot.box.hidden = !mimic;
+  if (!mimic) return;
+  const { g, w, h, dpr } = fitChart(slot.canvas);
+  const rows = mimic.follow || [];
+  const rowH = h / Math.max(1, rows.length);
+  const labelW = 54 * dpr;
+  g.textBaseline = 'middle';
+  rows.forEach((row, i) => {
+    const y = i * rowH;
+    g.fillStyle = INK;
+    g.fillText(row.name, 0, y + rowH / 2);
+    g.fillStyle = FLY_COLOR[row.id] || INK;
+    const bw = Math.max(dpr, row.share * (w - labelW - 40 * dpr));
+    g.fillRect(labelW, y + rowH * 0.2, bw, rowH * 0.6);
+    g.fillStyle = INK;
+    g.fillText(`${Math.round(row.share * 100)}%`, labelW + bw + 6 * dpr, y + rowH / 2);
+  });
+  const top = rows[0];
+  const how = mimic.copyStrength < 0.35 ? 'loosely' : mimic.copyStrength < 0.65 ? 'fairly closely' : 'very closely';
+  slot.note.textContent = top
+    ? `Copies ${top.name} most (${Math.round(top.share * 100)}%). Flies that win get copied more. It mirrors their moves ${how}.`
+    : '';
+}
+
+function paintFrozen(slot, note, compare) {
+  const { g, w, h, dpr } = fitChart(slot.canvas);
+  const total = compare?.decisions || 0;
+  const differ = compare?.disagreements || 0;
+  const drift = compare?.drift || 0;
+  const FULL = 0.1;
+  g.fillStyle = 'rgba(246, 240, 228, 0.12)';
+  g.fillRect(0, h * 0.25, w, h * 0.5);
+  g.fillStyle = '#e6c27a';
+  g.fillRect(0, h * 0.25, Math.max(drift > 0 ? 2 * dpr : 0, w * Math.min(1, drift / FULL)), h * 0.5);
+  g.fillStyle = INK;
+  g.textBaseline = 'middle';
+  g.textAlign = 'right';
+  g.fillText(`${(drift * 100).toFixed(1)}%`, w - 4 * dpr, h / 2);
+  g.textAlign = 'left';
+  const head = 'A frozen copy of its starting brain weighs every decision too.';
+  if (!total) {
+    note.textContent = `${head} The bar shows how far the learning brain's leanings have drifted from it.`;
+    return;
+  }
+  const flips = differ
+    ? ` That has changed its final pick ${differ} time${differ === 1 ? '' : 's'} out of ${total}`
+      + (Number.isFinite(compare.chipsSince) ? `, ${compare.chipsSince >= 0 ? 'winning' : 'losing'} ${Math.abs(compare.chipsSince)} chips since.` : '.')
+    : ' Not enough yet to change its final pick, since its playing style still decides most moves.';
+  note.textContent = drift < 0.002
+    ? `${head} Its leanings still match its starting self.`
+    : `${head} Its leanings have drifted ${(drift * 100).toFixed(1)}% from where it started.${flips}`;
+}
+
+function paintInsights(rec) {
+  const inspection = rec.inspection || {};
+  const rows = inspection.profile?.history || [];
+  const color = inspection.colorHex || '#e6c27a';
+  paintRadar(rec);
+  paintChips(rec.insights.chips, rows, inspection.profile?.startStack ?? 1000, color);
+  paintRewire(rec.insights.rewire, rows, color);
+  paintFollow(rec.insights.follow, inspection.mimic);
+  paintFrozen(rec.insights.frozen, rec.historyCompare, inspection.policyCompare);
 }
 
 function paintHistory(rec) {
   if (!rec.history) return;
   const inspection = rec.inspection || {};
-  paintRadar(rec);
-  if (rec.historyCompare) rec.historyCompare.textContent = compareText(inspection);
-  const recent = Array.isArray(inspection.learning?.recent) ? inspection.learning.recent : [];
+  if (rec.tab === 'learning') paintInsights(rec);
+  const recent = Array.isArray(inspection.learning?.recent) ? inspection.learning.recent.slice(-3) : [];
   if (!recent.length) {
     rec.history.replaceChildren(historyItem('Nothing has been learned yet.'));
     return;
@@ -1876,11 +2047,10 @@ function paintHistory(rec) {
     const facts = narrationFacts(record);
     const key = facts.length ? narrationKey(inspection, record, facts) : '';
     const sentence = key ? rec.narrations?.get(key) : '';
-    const error = key && rec.narrationError?.key === key ? rec.narrationError.text : '';
-    if (sentence || error) {
+    if (sentence) {
       const said = document.createElement('p');
       said.className = 'fly-brain-adapt';
-      said.textContent = sentence || error;
+      said.textContent = sentence;
       item.append(said);
     }
     return item;
@@ -1914,29 +2084,40 @@ function requestNarration(rec) {
     body: JSON.stringify({ facts }),
   }).then(async (response) => {
     const data = await response.json().catch(() => ({}));
+    return response.ok && typeof data.text === 'string' ? data.text.trim() : '';
+  }).catch(() => '').then((text) => {
     if (token !== rec.narrateToken) return;
-    if (!response.ok) {
-      const message = typeof data.error === 'string' && data.error ? data.error : `Narration failed (${response.status}).`;
-      rec.narrationError = { key, text: message };
-      rec.adapt.textContent = message;
-      paintHistory(rec);
-      return;
-    }
-    const text = typeof data.text === 'string' ? data.text.trim() : '';
-    if (!text) {
-      rec.adapt.textContent = 'Plain-language summary unavailable.';
-      return;
-    }
-    rec.narrations.set(key, text);
-    rec.adapt.textContent = text;
-    paintHistory(rec);
-  }).catch((error) => {
-    if (token !== rec.narrateToken) return;
-    const message = error?.message ? String(error.message) : 'Plain-language summary unavailable.';
-    rec.narrationError = { key, text: message };
-    rec.adapt.textContent = message;
+    const said = text || plainLesson(record);
+    rec.narrations.set(key, said);
+    rec.adapt.textContent = said;
     paintHistory(rec);
   });
+}
+
+/** Template wording used whenever Gemini is busy, cooling down, or unreachable. */
+function plainLesson(record) {
+  const deltas = Array.isArray(record?.deltas) ? record.deltas : [];
+  const hand = Number.isFinite(record?.handNumber) ? `After hand ${record.handNumber}` : 'After the last hand';
+  let up = 0;
+  let down = 0;
+  const bits = [];
+  for (const d of deltas) {
+    const parameter = String(d?.parameter || '');
+    const rose = Number(d.delta) > 0;
+    if (parameter.startsWith('gain:')) rose ? up++ : down++;
+    else if (parameter === 'aggression') bits.push(`plays a little ${rose ? 'more' : 'less'} aggressively`);
+    else if (parameter === 'bluff') bits.push(`bluffs a little ${rose ? 'more' : 'less'}`);
+    else if (parameter === 'foldToPressure') bits.push(`folds under pressure a little ${rose ? 'more' : 'less'}`);
+    else if (parameter.startsWith('follow.') || parameter === 'copyStrength') bits.push('copies a different mix of flies');
+  }
+  const links = (n) => `${n} brain connection${n === 1 ? '' : 's'}`;
+  const wires = up && down
+    ? `${links(up)} got stronger and ${down} got weaker`
+    : up ? `${links(up)} got stronger` : down ? `${links(down)} got weaker` : '';
+  const uniq = [...new Set(bits)];
+  if (!wires && !uniq.length) return `${hand}, nothing in its brain changed.`;
+  if (!uniq.length) return `${hand}, ${wires}.`;
+  return `${hand}, ${wires ? `${wires}, and it now ` : 'it now '}${uniq.join(', ')}.`;
 }
 
 function activityKey(inspection) {
@@ -1966,7 +2147,7 @@ function selectTab(rec, tab) {
   if (tab === 'brain' && !rec.root.hidden) startLoop(rec);
   else stopLoop(rec);
   if (tab === 'circuit') requestAnimationFrame(() => renderCircuit(rec));
-  if (tab === 'learning') requestAnimationFrame(() => paintRadar(rec));
+  if (tab === 'learning') requestAnimationFrame(() => paintInsights(rec));
 }
 
 function startLoop(rec) {
@@ -2036,7 +2217,7 @@ export function createBrainPanel(container) {
   tabBrain.setAttribute('aria-selected', 'false');
   const tabLearn = document.createElement('button');
   tabLearn.type = 'button';
-  tabLearn.textContent = 'Learning';
+  tabLearn.textContent = 'Insights';
   tabLearn.setAttribute('role', 'tab');
   tabLearn.setAttribute('aria-selected', 'false');
   const tabNow = document.createElement('button');
@@ -2144,11 +2325,40 @@ export function createBrainPanel(container) {
   nowPane.hidden = true;
   nowPane.append(thoughtKicker, thought, hand, why, executed, activations, toneNote, path);
   const learnPane = document.createElement('div');
-  learnPane.className = 'fly-brain-pane fly-brain-learn-pane';
+  learnPane.className = 'fly-brain-pane fly-brain-learn-pane fly-insights';
   learnPane.hidden = true;
+  const card = (title) => {
+    const box = document.createElement('section');
+    box.className = 'fly-insight';
+    const head = document.createElement('p');
+    head.className = 'fly-brain-kicker live';
+    head.textContent = title;
+    const note = document.createElement('p');
+    note.className = 'fly-insight-note';
+    box.append(head);
+    return { box, note };
+  };
+  const chart = (cls = '') => {
+    const canvas = document.createElement('canvas');
+    canvas.className = `fly-insight-chart ${cls}`;
+    return canvas;
+  };
+  const chipsCard = card('Chips over time');
+  const chipsChart = chart();
+  chipsCard.box.append(chipsChart, chipsCard.note);
+  const rewireCard = card('How much its brain changed each hand');
+  const rewireChart = chart();
+  rewireCard.box.append(rewireChart, rewireCard.note);
+  const followCard = card('Who it copies');
+  const followChart = chart('tall');
+  followCard.box.append(followChart, followCard.note);
+  const frozenCard = card('Learning vs. never learning');
+  const frozenChart = chart('short');
+  frozenCard.box.append(frozenChart, frozenCard.note);
+
   const profileKicker = document.createElement('p');
   profileKicker.className = 'fly-brain-kicker live';
-  profileKicker.textContent = 'Strategy profile';
+  profileKicker.textContent = 'Playing style';
   const compareRow = document.createElement('label');
   compareRow.className = 'fly-brain-part';
   compareRow.textContent = 'Compare with ';
@@ -2164,21 +2374,17 @@ export function createBrainPanel(container) {
   radar.width = 960;
   radar.height = 280;
   const profileNote = document.createElement('p');
-  profileNote.className = 'fly-brain-part';
-  profileNote.textContent = 'Model parameters until this fly has played 3 hands.';
-  const historyKicker = document.createElement('p');
-  historyKicker.className = 'fly-brain-kicker live';
-  historyKicker.textContent = 'Frozen copy';
-  const historyCompare = document.createElement('p');
-  historyCompare.className = 'fly-brain-part';
-  historyCompare.textContent = 'The frozen copy has not been scored yet.';
-  const handsKicker = document.createElement('p');
-  handsKicker.className = 'fly-brain-kicker live';
-  handsKicker.textContent = 'Hands';
+  profileNote.className = 'fly-insight-note';
+  const styleCard = document.createElement('section');
+  styleCard.className = 'fly-insight';
+  styleCard.append(profileKicker, compareRow, radar, profileNote);
+  const historyCompare = frozenCard.note;
+  const handsCard = card('Recent lessons');
   const history = document.createElement('ol');
   history.className = 'fly-brain-history';
   history.append(historyItem('Nothing has been learned yet.'));
-  learnPane.append(profileKicker, compareRow, radar, profileNote, historyKicker, historyCompare, handsKicker, history);
+  handsCard.box.append(history);
+  learnPane.append(chipsCard.box, rewireCard.box, followCard.box, styleCard, frozenCard.box, handsCard.box);
   stage.append(circuitPane, brainPane, nowPane, learnPane);
 
   const learn = document.createElement('p');
@@ -2223,6 +2429,12 @@ export function createBrainPanel(container) {
     radar,
     comparePick,
     profileNote,
+    insights: {
+      chips: { canvas: chipsChart, note: chipsCard.note },
+      rewire: { canvas: rewireChart, note: rewireCard.note },
+      follow: { canvas: followChart, note: followCard.note, box: followCard.box },
+      frozen: { canvas: frozenChart },
+    },
     narrations: new Map(),
     growth,
     adapt,
@@ -2248,7 +2460,7 @@ export function createBrainPanel(container) {
   if (typeof ResizeObserver === 'function') {
     const watcher = new ResizeObserver(() => {
       renderCircuit(rec);
-      if (rec.tab === 'learning') paintRadar(rec);
+      if (rec.tab === 'learning') paintInsights(rec);
     });
     watcher.observe(stage);
   }
