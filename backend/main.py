@@ -216,6 +216,10 @@ class Deposit(BaseModel):
     amount: int = Field(gt=0, description="cents")
 
 
+class SetBalance(BaseModel):
+    amount: int = Field(ge=0, description="cents")
+
+
 class RoundCreate(BaseModel):
     players: List[str] = Field(min_length=NUM_PLAYERS, max_length=NUM_PLAYERS)
     closes_at: Optional[float] = Field(None, description="unix timestamp; betting auto-closes")
@@ -308,6 +312,20 @@ def deposit(user_id: int, body: Deposit):
         change_balance(conn, user_id, body.amount, "deposit")
         bal = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()[0]
         return {"user_id": user_id, "balance": bal}
+
+
+@app.post("/users/{user_id}/set-balance")
+def set_balance(user_id: int, body: SetBalance):
+    """DEV ONLY. Testing shortcut: set the bankroll to an exact amount (bets in play are untouched)."""
+    if not DEV_MODE:
+        raise HTTPException(403, "Test money is disabled outside DEV_MODE")
+    with tx() as conn:
+        u = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()
+        if not u:
+            raise HTTPException(404, "User not found")
+        if body.amount != u["balance"]:
+            change_balance(conn, user_id, body.amount - u["balance"], "deposit", "test reset")
+        return {"user_id": user_id, "balance": body.amount}
 
 
 @app.get("/users/{user_id}")

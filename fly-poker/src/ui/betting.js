@@ -196,6 +196,15 @@ export function initBetting(options = {}) {
     } catch (e) { say(e.message, 'err'); }
   }
 
+  async function setBalance(amount) {
+    try {
+      const r = await api('/users/' + state.userId + '/set-balance', { method: 'POST', body: { amount } });
+      state.balance = r.balance;
+      say('Test bankroll: ' + money(r.balance) + '.', 'ok');
+      render();
+    } catch (e) { say(e.message, 'err'); }
+  }
+
   async function rebuy() {
     try {
       const r = await api('/users/' + state.userId + '/rebuy', { method: 'POST' });
@@ -380,7 +389,40 @@ export function initBetting(options = {}) {
   const bankAmt = el('strong', 'bet-bank-amt');
   const bankMine = el('span', 'bet-bank-mine');
   const bank = el('div', 'bet-bank');
-  bank.append(el('span', 'bet-bank-label', 'Bankroll'), bankAmt, bankMine);
+  const walletBtn = el('button', 'bet-wallet-btn', '+');
+  walletBtn.type = 'button';
+  walletBtn.title = 'Test money';
+  walletBtn.setAttribute('aria-label', 'Test money');
+  walletBtn.setAttribute('aria-expanded', 'false');
+  bank.append(el('span', 'bet-bank-label', 'Bankroll'), bankAmt, walletBtn, bankMine);
+
+  // test-money popover; lives on <body> because the dock clips overflow
+  const wallet = el('div', 'bet-wallet');
+  wallet.hidden = true;
+  wallet.append(el('p', 'bet-wallet-title', 'Test money'));
+  for (const [label, fn] of [
+    ['Reset to $1,000', () => setBalance(100000)],
+    ['+ $1,000', () => setBalance(state.balance + 100000)],
+    ['+ $10,000', () => setBalance(state.balance + 1000000)],
+    ['Set to $0', () => setBalance(0)],
+  ]) {
+    const b = el('button', 'bet-wallet-opt', label);
+    b.type = 'button';
+    b.addEventListener('click', () => { fn(); toggleWallet(false); });
+    wallet.append(b);
+  }
+  document.body.append(wallet);
+  function toggleWallet(show = wallet.hidden) {
+    wallet.hidden = !show;
+    walletBtn.setAttribute('aria-expanded', String(show));
+    if (!show) return;
+    const r = walletBtn.getBoundingClientRect();
+    wallet.style.left = Math.round(r.left) + 'px';
+    wallet.style.bottom = Math.round(innerHeight - r.top + 8) + 'px';
+  }
+  walletBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleWallet(); });
+  document.addEventListener('click', (e) => { if (!wallet.hidden && !wallet.contains(e.target)) toggleWallet(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleWallet(false); });
 
   const chipRow = el('div', 'bet-chips');
   chipRow.setAttribute('role', 'radiogroup');
