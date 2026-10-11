@@ -6,6 +6,7 @@
 
 import { MOTOR0, nodeId } from './circuit.js';
 import { smoothedRates } from './styles.js';
+import { updateNeuromodulators } from './neuromodulators.js';
 
 const STYLE_BAND = 0.25;              // bluff and fold-to-pressure may drift this far from the base style
 const AGG_BAND = [0.5, 1.75];         // aggression stays within these multiples of the base style
@@ -118,6 +119,22 @@ export function learnFromHand(fly, info) {
   const myCalls = events.filter((ev) => ev.id === selfId && ev.action === 'call').length;
   const lostToHeat = chipsDelta < 0 && topFoe && myCalls > 0;
   const callPaid = chipsDelta > 0 && myCalls > 0;
+  const myBets = events.filter((ev) => ev.id === selfId && (ev.action === 'bet' || ev.action === 'raise')).length;
+  const aggressiveShare = pending.length ? myBets / pending.length : 0;
+  const modulatorUpdate = updateNeuromodulators(fly.neuromodulators, {
+    reward,
+    lostToHeat,
+    aggression: aggressiveShare,
+  });
+  for (const key of ['octopamine', 'reward', 'punishment']) {
+    pushDelta(
+      deltas,
+      `mod.${key}`,
+      modulatorUpdate.before[key],
+      modulatorUpdate.after[key],
+      'small bounded model-state update from this hand\'s outcome and betting pressure',
+    );
+  }
   if (learnRate > 0 && (lostToHeat || callPaid)) {
     const before = fly.params.foldToPressure;
     const step = learnRate * magnitude * 0.35 * (lostToHeat ? 1 : -1);
@@ -135,7 +152,6 @@ export function learnFromHand(fly, info) {
         : `won ${chipsDelta} after calling ${myCalls} time(s)`,
     );
   }
-  const myBets = events.filter((ev) => ev.id === selfId && (ev.action === 'bet' || ev.action === 'raise')).length;
   if (learnRate > 0 && chipsDelta !== 0 && myBets > 0) {
     const before = fly.params.aggression;
     const step = learnRate * magnitude * before * 0.5 * Math.sign(chipsDelta);

@@ -9,6 +9,7 @@ import { ACTIONS, forward } from './circuit.js';
 import { planAmount } from '../poker/betting.js';
 import { estimateEquity, potOdds, boardHeat, drawBonus } from '../poker/equity.js';
 import { handPercentile, holeLabel, preflopBand } from '../poker/preflop.js';
+import { neuromodulatorBias } from './neuromodulators.js';
 
 const PREF = {
   'tight-aggressive': ['raise', 'bet', 'call', 'check', 'fold'],
@@ -200,6 +201,16 @@ function applyStyle(ctx, logits, notes) {
   if (stick > 0.05) notes.push(`Already invested ${(ctx.invested * 100).toFixed(0)}% of the pot`);
 }
 
+function applyNeuromodulation(ctx, logits, notes) {
+  const bias = neuromodulatorBias(ctx.neuromodulators);
+  for (const [action, delta] of Object.entries(bias)) logits[action] += delta;
+  const state = ctx.neuromodulators;
+  if (!state) return;
+  notes.push(
+    `Small neuromodulator bias: octopamine ${state.octopamine.toFixed(2)}, reward ${state.reward.toFixed(2)}, punishment ${state.punishment.toFixed(2)}`,
+  );
+}
+
 function desiredRaiseTo(ctx, action) {
   if (action !== 'bet' && action !== 'raise') return null;
   const frac = betFrac(ctx.params, ctx.equity);
@@ -259,6 +270,7 @@ export function decide(ctx) {
   if (equityPack.draws.length) notes.push(equityPack.draws.join(', '));
   notes.push(`Circuit readout leans ${leaned} (${leanedV.toFixed(2)}) before style bias`);
   applyStyle(rich, logits, notes);
+  applyNeuromodulation(rich, logits, notes);
   if (ctx.facingName && ctx.toCall > 0) {
     notes.push(`${ctx.facingName}'s learned aggression ${ctx.oppAggression.toFixed(2)} is in the fold bias`);
   }

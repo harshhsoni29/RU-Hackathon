@@ -87,7 +87,7 @@ NPCs never affect your bet: odds are fixed when the round opens and every winnin
 | Callie | Loose-passive | Calling station, sticks around once invested |
 | Mani | Maniac | Very wide range, big bets, lots of bluffs |
 
-Each fly runs the same 45-neuron circuit with sensory, Kenyon, central, descending and motor layers. Its playstyle sets thresholds on top of the circuit. After every hand it adjusts its synapse strengths based on whether it won or lost chips, and tracks how its opponents play.
+Each fly runs the same 45-unit, connectome-inspired circuit with sensory-feature, Kenyon-inspired, recurrent, descending-readout, and action-score layers. Its playstyle sets thresholds on top of the circuit. After every hand it updates bounded connection gains, small neuromodulator-inspired model variables, and an opponent model. These are computational abstractions, not a literal fly brain or a structural rewiring simulation.
 
 The full write-up is in [`fly-poker/src/brains/README.md`](fly-poker/src/brains/README.md), including what the circuit is (and isn't) based on and the exact learning rule. Playstyle numbers live in [`fly-poker/config/styles.json`](fly-poker/config/styles.json).
 

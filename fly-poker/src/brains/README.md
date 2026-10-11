@@ -9,7 +9,7 @@ These five agents are **connectome-inspired**. They are not a download of the Dr
 
 ## What this circuit is
 
-Each fly has the same 45-neuron sketch, built with a fixed seed (`20230310`) so the wiring never changes:
+Each fly has the same 45-unit computational sketch, built with a fixed seed (`20230310`) so the topology never changes. The sensory entries are poker features and the motor entries are action scores; their labels are functional analogies, not identified fly neurons:
 
 | Pool | Neurons | Role |
 | --- | --- | --- |
@@ -64,5 +64,7 @@ Hand ranks, evaluated separately in `src/poker/evaluator.js`, are standard high 
    Those rates are sensory features on the next hand, and in a close pot-odds spot they move the fold/call logits directly: fold gets `(foldToPressure - 0.4) * 4 + (opponentAggression - 0.4) * 3.2`.
 
 4. **Threshold nudges, inside a band.** VPIP and PFR stay at the loaded values. If the fly called into someone's bets or raises and lost, `foldToPressure` steps up by `learnRate * min(1, |chips| / (10 * bb)) * 0.35`; if it called and won, it steps down by the same amount. It stays within base ± 0.25. If the fly bet or raised, `aggression` steps up when it won chips and down when it lost them, inside base × `[0.5, 1.75]`. A bet or raise with equity under 0.45 counts as a bluff and nudges `bluff` by a smaller step, clamped to base ± 0.25.
+
+5. **Small neuromodulator-inspired state.** Each fly also keeps bounded `octopamine`, `reward`, and `punishment` proxies, initialized at 0.5. They move slowly after each hand from the same chip reward, costly calls into pressure, and the fly's own aggressive-action share. On the next decision they add only about 0.12 logits of action bias: octopamine slightly favors betting/raising, reward slightly favors continuing, and punishment slightly favors folding. These are transparent computational proxies, not modeled transmitter concentrations or identified fly cell types.
 
 The inspection record lists every non-zero opponent-rate change, the threshold changes, and the five largest gain changes, each with before, after, delta, and a why-string that quotes those numbers.

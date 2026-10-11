@@ -3,7 +3,8 @@
  * Circuit, Brain, and Learning fill the bottom sheet.
  * The 3D brain is a fruit fly: two large curved optic-lobe sheets, a narrower
  * central brain, mushroom-body horns, and small ventral antennal lobes.
- * Synapses are the real 45-neuron circuit. Rest colors stay bright.
+ * Lines correspond to the model's 45-unit graph. The anatomical rendering is
+ * illustrative; it is not a spatial map of those units. Rest colors stay bright.
  * Active sections flare once, then playback holds on the executed action.
  * Drag orbits, right-drag or shift-drag pans, the wheel, +/− or a double-click zooms, Reset restores the camera.
  */
@@ -1413,31 +1414,23 @@ function bakeBrain(view, inspection) {
 }
 
 /**
- * Neuromodulator tone emulated from the fly's learned strategy axes (0..1).
- * Octopamine (insect noradrenaline) drives aggression through central-brain hubs (aSP2, pC1/P1)
- * and the descending path. PAM dopamine signals reward to the horizontal mushroom-body lobe;
- * PPL1-γ1pedc dopamine signals punishment to the stalk and vertical lobe. Card evidence
- * (optic input) is weighted down as bluffing goes up.
+ * Visual encoding of the model's small, bounded neuromodulator proxies (0..1).
+ * The names are inspired by insect systems, but they are not transmitter
+ * measurements or a simulation of PAM/PPL1 or identified octopamine cells.
  */
 function toneOf(inspection) {
-  const axes = inspection?.profile?.axes || [];
-  const axis = (key, fallback) => {
-    const hit = axes.find((row) => row.key === key);
-    return hit && Number.isFinite(hit.value) ? hit.value : fallback;
-  };
-  const aggression = axis('aggression', 0.5);
-  const bluff = axis('bluff', 0.3);
-  const risk = axis('risk', 0.5);
-  const fold = axis('fold', 0.4);
+  const state = inspection?.neuromodulators || {};
+  const octopamine = Number.isFinite(state.octopamine) ? state.octopamine : 0.5;
+  const reward = Number.isFinite(state.reward) ? state.reward : 0.5;
+  const punishment = Number.isFinite(state.punishment) ? state.punishment : 0.5;
   const scale = (v) => 0.25 + 1.35 * v;
   return {
-    octopamine: aggression,
-    reward: risk,
-    punish: fold,
-    cards: 1 - 0.6 * bluff,
-    tones: [scale(1 - 0.6 * bluff), scale(0.5), scale(aggression), scale(aggression), scale(0.3 + 0.5 * aggression)],
-    rewardTone: scale(risk),
-    punishTone: scale(fold),
+    octopamine,
+    reward,
+    punish: punishment,
+    tones: [scale(0.5), scale(0.5), scale(octopamine), scale(octopamine), scale(0.5)],
+    rewardTone: scale(reward),
+    punishTone: scale(punishment),
   };
 }
 
@@ -1453,9 +1446,10 @@ function applyTone(uniforms, tone) {
 
 function toneLine(tone) {
   const pick = (v, low, mid, high) => (v >= 0.66 ? high : v >= 0.36 ? mid : low);
-  return `Its mood: ${pick(tone.octopamine, 'calm', 'alert', 'fired up')}. `
-    + `It ${pick(tone.reward, 'plays it safe', 'takes the odd risk', 'loves a gamble')} `
-    + `and ${pick(tone.punish, 'rarely backs down', 'sometimes backs down', 'backs down easily')} when someone pushes back.`;
+  return `Its mood: ${pick(tone.octopamine, 'calm', 'alert', 'fired up')}, `
+    + `${pick(tone.reward, 'not feeling lucky', 'neutral about its luck', 'riding a good run')}, `
+    + `and ${pick(tone.punish, 'unbothered by losses', 'a little wary', 'stung by recent losses')}. `
+    + 'These are simple stand-ins for fly brain chemistry and only nudge its choices slightly.';
 }
 
 const HELD_GAIN = 0.7;
@@ -1589,7 +1583,9 @@ function learnedLines(inspection) {
     if (parameter.startsWith('gain:')) {
       const link = parameter.slice(5).replace('->', ' → ');
       const verb = Number(delta.delta) < 0 ? 'eased' : 'strengthened';
-      lines.push(`${hand}: synapse ${link} ${verb}${span}.`);
+      lines.push(`${hand}: model connection ${link} ${verb}${span}.`);
+    } else if (parameter.startsWith('mod.')) {
+      continue;
     } else if (parameter.startsWith('follow.')) {
       lines.push(`${hand}: ${delta.why}, so the chance of following them moved${pctSpan(delta.before, delta.after)}.`);
     } else if (parameter === 'copyStrength') {
@@ -1935,7 +1931,7 @@ function paintRewire(slot, rows, color) {
   const { g, w, h, dpr } = fitChart(slot.canvas);
   const values = rows.map((row) => row.rewire).filter(Number.isFinite);
   if (!values.length) {
-    slot.note.textContent = 'Each bar will be one hand: taller means its connections changed more.';
+    slot.note.textContent = 'Each bar will be one hand: taller means its model connections changed more.';
     return;
   }
   const top = Math.max(...values) || 1;
@@ -1947,7 +1943,7 @@ function paintRewire(slot, rows, color) {
     g.fillRect(i * (bw + gap), h - bh, bw, bh);
   });
   if (values.length < 6) {
-    slot.note.textContent = 'Taller bars mean its connections changed more after that hand.';
+    slot.note.textContent = 'Taller bars mean its model connections changed more after that hand.';
     return;
   }
   const third = Math.max(1, Math.floor(values.length / 3));
@@ -1955,10 +1951,10 @@ function paintRewire(slot, rows, color) {
   const early = avg(values.slice(0, third));
   const late = avg(values.slice(-third));
   slot.note.textContent = late < early * 0.7
-    ? 'Its brain is settling down: recent hands change it less than early ones did.'
+    ? 'Its connections are settling down: recent hands change them less than early ones did.'
     : late > early * 1.3
-      ? 'Its brain is changing more than before, so something about the table is surprising it.'
-      : 'Its brain keeps changing at a steady pace as it plays.';
+      ? 'Its connections are changing more than before, so recent hands surprised it.'
+      : 'Its connections keep changing at a steady pace as it plays.';
 }
 
 const FLY_COLOR = Object.fromEntries(FLIES.map((fly) => [fly.id, `#${fly.color.toString(16).padStart(6, '0')}`]));
@@ -2003,7 +1999,7 @@ function paintFrozen(slot, note, compare) {
   g.textAlign = 'right';
   g.fillText(`${(drift * 100).toFixed(1)}%`, w - 4 * dpr, h / 2);
   g.textAlign = 'left';
-  const head = 'A frozen copy of its starting brain weighs every decision too.';
+  const head = 'A frozen copy of its starting model weighs every decision too.';
   if (!total) {
     note.textContent = `${head} The bar shows how far the learning brain's leanings have drifted from it.`;
     return;
@@ -2110,12 +2106,12 @@ function plainLesson(record) {
     else if (parameter === 'foldToPressure') bits.push(`folds under pressure a little ${rose ? 'more' : 'less'}`);
     else if (parameter.startsWith('follow.') || parameter === 'copyStrength') bits.push('copies a different mix of flies');
   }
-  const links = (n) => `${n} brain connection${n === 1 ? '' : 's'}`;
+  const links = (n) => `${n} model connection${n === 1 ? '' : 's'}`;
   const wires = up && down
     ? `${links(up)} got stronger and ${down} got weaker`
     : up ? `${links(up)} got stronger` : down ? `${links(down)} got weaker` : '';
   const uniq = [...new Set(bits)];
-  if (!wires && !uniq.length) return `${hand}, nothing in its brain changed.`;
+  if (!wires && !uniq.length) return `${hand}, no tracked model parameter changed.`;
   if (!uniq.length) return `${hand}, ${wires}.`;
   return `${hand}, ${wires ? `${wires}, and it now ` : 'it now '}${uniq.join(', ')}.`;
 }

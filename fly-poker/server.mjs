@@ -73,10 +73,10 @@ async function narrate(facts) {
   const key = geminiKey();
   if (!key) throw new Error('GEMINI_KEY is missing from .env');
   const prompt = [
-    'You describe how a poker-playing fruit fly\'s small learned circuit changed after one hand.',
+    'You describe how a poker-playing fruit fly\'s small learned model changed after one hand.',
     'Use only the facts below. Do not add numbers, synapses, or names that are not in the facts.',
     'Write for a casual viewer with no neuroscience or poker-math background: no decimals, no jargon like "synapse" or "fold-to-pressure".',
-    'Say what changed in its brain in everyday words and what that means for how it will play. Reply with one or two short sentences.',
+    'Say what changed in the model in everyday words and what that means for how it will play. Reply with one or two short sentences.',
     '',
     facts.join('\n'),
   ].join('\n');
