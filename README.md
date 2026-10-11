@@ -44,7 +44,9 @@ The game still runs without the API. The bet buttons just read "Offline".
 **Watching the table**
 
 - Drag to look around, scroll to zoom, right-drag to pan.
-- Click a fly, or its name plate, to open its inspector: cards, stats, circuit activity and what it learned last hand.
+- Click a fly, or its name plate, to open its inspector. It has four tabs: **Circuit** (live neuron activity), **Brain** (the animated brain), **Insights** (how its connections changed over recent hands) and **Right now** (a plain-language read of its current hand).
+- The header shows the street, whose turn it is, the pot and the **community cards**. Each fly's hole cards sit next to its name.
+- The **action log** slides out from the right edge. It colour-codes each action and animates only new entries. Use the tab on its edge to hide or show it.
 - **Deal** starts a hand, **Next action** steps through it, and **Auto-play** runs hands back to back. The **Speed** slider sets how fast.
 
 **Betting**
@@ -71,7 +73,7 @@ Everyone starts with **$1,000** of play money. If you run out, the dock offers a
 
 ---
 
-**NPC bettors.** Twenty computer bettors share the table. When a betting window opens, each NPC (90% of them) plans one bet from its own $1,000 bankroll (stakes of $1 to $100) for a moment inside the window. The bets land one by one, build up toward the end, and everyone still waiting bets in the last second as betting locks, so you watch the crowd form on each fly's card. A busted NPC gets a fresh bankroll. Half are **random** (any fly) and half follow the **odds** (they back the favourite most often, but long shots still get some money). Every bet card shows how many NPCs are on that fly next to what your stake pays, for example `$5 pays $23.80 · 3 NPCs`.
+**NPC bettors.** Up to 100 computer bettors share the table (`NUM_NPCS`). When a betting window opens, each NPC (90% of them) plans one bet from its own $1,000 bankroll (stakes of $1 to $100) for a moment inside the window. The bets land one by one, build up toward the end, and everyone still waiting bets in the last second as betting locks, so you watch the crowd form on each fly's card. A busted NPC gets a fresh bankroll. Half are **random** (any fly) and half follow the **odds** (they back the favourite most often, but long shots still get some money). Every bet card shows how many NPCs are on that fly next to what your stake pays, for example `$5 pays $23.80 · 3 NPCs`.
 
 NPCs never affect your bet: odds are fixed when the round opens and every winning bet is paid by the house, so nothing is split with them. NPCs are ordinary accounts, so their bets are settled and refunded like yours.
 
@@ -87,9 +89,20 @@ NPCs never affect your bet: odds are fixed when the round opens and every winnin
 | Callie | Loose-passive | Calling station, sticks around once invested |
 | Mani | Maniac | Very wide range, big bets, lots of bluffs |
 
-Each fly runs the same 45-unit, connectome-inspired circuit with sensory-feature, Kenyon-inspired, recurrent, descending-readout, and action-score layers. Its playstyle sets thresholds on top of the circuit. After every hand it updates bounded connection gains, small neuromodulator-inspired model variables, and an opponent model. These are computational abstractions, not a literal fly brain or a structural rewiring simulation.
+Each fly runs the same 45-neuron circuit with sensory, Kenyon, central, descending and motor layers. Its playstyle sets thresholds on top of the circuit. After every hand it adjusts its synapse strengths based on whether it won or lost chips, and tracks how its opponents play. Learning is fairly aggressive: it raises or lowers its fold-to-pressure and aggression in both directions, and its playstyle thresholds can drift within a band around the starting values.
 
 The full write-up is in [`fly-poker/src/brains/README.md`](fly-poker/src/brains/README.md), including what the circuit is (and isn't) based on and the exact learning rule. Playstyle numbers live in [`fly-poker/config/styles.json`](fly-poker/config/styles.json).
+
+---
+
+## Optional: AI narration (Gemini)
+
+The inspector can explain a fly's thinking in plain language. By default it uses built-in template wording and needs nothing. To get Gemini-written narration:
+
+1. Create `fly-poker/.env` (it is git-ignored) containing `GEMINI_KEY=your-key`.
+2. Run `node server.mjs` from `fly-poker/` instead of `python -m http.server`. It serves the game on **http://127.0.0.1:8766/** (set `PORT` to change it) and proxies narration requests at `/api/narrate`, so the key never reaches the browser.
+
+Requests are rate-limited. The server falls back through lighter Gemini models, and the game uses the template wording whenever Gemini is busy, cooling down or unreachable. The betting API also accepts requests from port 8766.
 
 ---
 
@@ -109,7 +122,8 @@ fly-poker/               The game (plain JavaScript + three.js, no build step)
   src/table.js           Hand flow: blinds, streets, showdown
   src/poker/             Cards, hand evaluator, betting rules, side pots, equity
   src/brains/            Fly circuits, playstyles, learning
-  src/ui/                3D scene, room, flies, cards, HUD panels, betting UI, styles
+  src/ui/                3D scene, room, flies, cards, HUD (status, board, action log), fly inspector, betting UI, styles
+  server.mjs             Optional static server + Gemini narration proxy (needs .env)
   config/styles.json     Playstyle numbers for each fly
   scripts/simulate.mjs   Headless simulation of thousands of hands
   test/eval.test.mjs     Hand-ranking tests
@@ -134,7 +148,7 @@ The API reads these environment variables. The defaults are set up for local pla
 | `RAKE_BPS` | `500` | House rake in basis points (500 = 5%). |
 | `ENGINE_API_KEY` | `dev-engine-key` | Key required to open, lock, settle or cancel rounds. |
 | `DEV_MODE` | `1` | `1` enables the test deposit endpoint. |
-| `CORS_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Pages allowed to call the API. |
+| `CORS_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8766,http://localhost:8766` | Pages allowed to call the API. |
 | `DB_PATH` | `betting.db` | SQLite database file. Delete it to reset all accounts and rounds. |
 
 On macOS/Linux, set a variable inline: `RAKE_BPS=300 uvicorn main:app --port 8000`.
