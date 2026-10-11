@@ -16,14 +16,14 @@
 // Betting happens in short windows. openWindow() slides the bet cards and chips up from the bottom
 // of the dock and starts a skippable 10 s countdown; when it ends (or Skip is pressed) the round is
 // locked and the betting UI slides away until the next hand is over. During auto-play, offer() pops
-// up a "!" for 2 s instead; click it in time and a window opens, otherwise play carries on.
+// up a "!" for 3 s instead; click it in time and a window opens, otherwise play carries on.
 
 const DEFAULTS = {
   apiBase: 'http://127.0.0.1:8000',
   playerNames: [],
   pollMs: 1500,
   windowSeconds: 10,     // length of a betting window
-  promptMs: 2000,        // how long the "!" stays up during auto-play
+  promptMs: 3000,        // how long the "!" stays up during auto-play
   dev: new URLSearchParams(location.search).has('dev'),
 };
 
@@ -460,11 +460,11 @@ export function initBetting(options = {}) {
 
   // everything that slides away between windows
   const panel = el('div', 'bet-panel');
-  panel.append(clearBtn, rebuyBtn, chipRow);
+  panel.append(rebuyBtn, chipRow);
 
-  // countdown + "Lock in bets" sit in the header under the round status
+  // countdown, "Clear bets" and "Lock in bets" sit in the header under the round status
   const lockRow = el('div', 'bet-lock');
-  lockRow.append(timerBox, skipBtn);
+  lockRow.append(clearBtn, timerBox, skipBtn);
 
   // the "!" shown during auto-play when a new bet can be placed
   const SVG = 'http://www.w3.org/2000/svg';

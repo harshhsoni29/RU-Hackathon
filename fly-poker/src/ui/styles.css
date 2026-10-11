@@ -61,12 +61,13 @@ body::after {
   top: 14px;
   left: 16px;
   right: 16px;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   gap: 16px;
-  align-items: flex-start;
+  align-items: start;
   pointer-events: none;
 }
+.top .potline { justify-self: end; }
 
 .brand h1, .street, .pot, .inspect h2, .inspect h3 {
   font-family: Palatino, Georgia, serif;
@@ -363,7 +364,9 @@ button.ghost { background: transparent; }
 .bet-less:hover:not(:disabled) { border-color: var(--brass); color: var(--brass); }
 .bet-clear { padding: 6px 14px; font-weight: 700; color: var(--ink); background: #3a2418; border-color: var(--line); }
 .bet-clear:hover { border-color: var(--brass); color: var(--brass); }
-.bet-clear[hidden] { display: block; visibility: hidden; }   /* keep its width so the bar doesn't reflow */
+.bet-clear[hidden] { display: block; visibility: hidden; }   /* keep its width so the row doesn't shift */
+.bet-lock .bet-clear { padding: 5px 14px; font-size: 13px; }
+.bet-lock .bet-clear, .bet-lock .bet-skip { min-width: 112px; }   /* equal widths keep the timer centered */
 
 .bet-btn {
   width: 100%;
@@ -495,8 +498,8 @@ html[data-bet="open"] .bet-timer-bar i { animation: bet-drain var(--ms, 10s) lin
 .bet-alert:hover { border: 0; filter: brightness(1.08); }
 .bet-alert-mark { font: 800 30px/1 Palatino, Georgia, serif; color: #2a1a10; }
 .bet-alert svg { position: absolute; inset: -5px; width: calc(100% + 10px); height: calc(100% + 10px); transform: rotate(-90deg); pointer-events: none; }
-.bet-alert circle { fill: none; stroke: var(--brass); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 157.1; animation: bet-ring var(--ms, 2s) linear forwards; }
-@keyframes bet-ring { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 157.1; } }   /* the ring empties as the 2 s run out */
+.bet-alert circle { fill: none; stroke: var(--brass); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 157.1; animation: bet-ring var(--ms, 3s) linear forwards; }
+@keyframes bet-ring { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 157.1; } }   /* the ring empties as the time runs out */
 
 @media (prefers-reduced-motion: no-preference) {
   .bet-slot {
