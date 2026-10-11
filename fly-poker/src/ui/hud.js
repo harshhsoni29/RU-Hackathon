@@ -58,7 +58,7 @@ export function mountHud() {
           <button type="button" data-deal>Deal</button>
           <button type="button" data-next>Next</button>
           <button type="button" data-auto>Auto-play</button>
-          <label class="speed">Speed <input type="range" min="1" max="8" value="4" data-speed /> <span data-speed-label>0.6s</span></label>
+          <label class="speed">Speed <input type="range" min="1" max="19" value="15" data-speed /> <span data-speed-label>0.6s</span></label>
           <button type="button" data-reset class="ghost">Reset</button>
         </div>
         <div class="bet-bar" data-bet-bar></div>
@@ -94,7 +94,7 @@ export function mountHud() {
   });
 
   function delayMs() {
-    return 1100 - Number(speed.value) * 120;
+    return (21 - Number(speed.value)) * 100;   // 2.0 s at the slow end, 0.2 s at the fast end
   }
   function paintSpeed() {
     speedLabel.textContent = `${(delayMs() / 1000).toFixed(1)}s`;

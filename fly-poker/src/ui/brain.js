@@ -256,6 +256,8 @@ const CSS = `
   background: var(--fly, #e6c27a);
 }
 .fly-brain-now-pane .fly-brain-thought { margin-bottom: 4px; }
+.fly-brain-now-pane p:empty { display: none; }
+.fly-brain-now-pane .fly-brain-path { color: #d9cbb8; font-family: inherit; font-size: 14px; font-style: italic; }
 @media (max-width: 760px) {
   .fly-brain-gl { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 1fr) minmax(0, 40%); }
   .fly-brain-live { border-left: 0; border-top: 1px solid rgba(235, 238, 250, 0.14); }
@@ -946,24 +948,20 @@ function replayHot(now, t0, hot, slot) {
   return out;
 }
 
+const PLAIN_PART = {
+  sensory: 'its eyes',
+  kenyon: 'its memory',
+  central: 'its decision center',
+  descending: 'its nerve cord',
+  motor: 'the muscles',
+};
+
 function firedPath(inspection) {
   const { nodes, activity } = modelOf(inspection);
-  const means = sectionMeans(nodes, activity);
-  const hot = hotSections(means);
-  if (!hot.length) return 'No stage fired on this step.';
-  const executed = inspection?.situation?.executed || inspection?.decision?.action || '';
-  const logits = inspection?.situation?.logits || inspection?.decision?.logits;
-  return hot.map((layer) => {
-    if (layer !== 'motor') return `${LAYER_TITLE[layer]} ${means[layer].toFixed(2)}`;
-    const neuron = nodes.find((node) => node.layer === 'motor' && node.label === executed);
-    const activation = neuron ? activity[neuron.index] : means.motor;
-    const score = logits && Number.isFinite(logits[executed]) && logits[executed] > -1e8 ? logits[executed] : null;
-    const action = executed || 'no action recorded';
-    const bits = [`Motor: ${action}`];
-    if (Number.isFinite(activation)) bits.push(activation.toFixed(2));
-    if (score != null) bits.push(`score ${score.toFixed(2)}`);
-    return bits.join(' ');
-  }).join(' → ');
+  const hot = hotSections(sectionMeans(nodes, activity)).filter((layer) => layer !== 'motor');
+  const action = inspection?.situation?.executed || inspection?.decision?.action;
+  if (!hot.length || !action) return '';
+  return `Inside its brain, the signal ran from ${hot.map((layer) => PLAIN_PART[layer]).join(' to ')} and out to the muscles that ${action}.`;
 }
 
 const BRAIN_CENTER_Y = -0.08;
@@ -1440,12 +1438,10 @@ function applyTone(uniforms, tone) {
 }
 
 function toneLine(tone) {
-  const level = (v) => (v >= 0.66 ? 'high' : v >= 0.36 ? 'medium' : 'low');
-  return `Neuromodulator tone (emulated from this fly's play): octopamine ${level(tone.octopamine)} `
-    + `(aggression ${tone.octopamine.toFixed(2)}) brightens the central brain and descending path; `
-    + `PAM reward dopamine ${level(tone.reward)} (risk ${tone.reward.toFixed(2)}) lights the horizontal mushroom-body lobe; `
-    + `PPL1 punishment dopamine ${level(tone.punish)} (fold ${tone.punish.toFixed(2)}) lights the vertical lobe; `
-    + `card weighting ${tone.cards.toFixed(2)} sets the optic lobes.`;
+  const pick = (v, low, mid, high) => (v >= 0.66 ? high : v >= 0.36 ? mid : low);
+  return `Its mood: ${pick(tone.octopamine, 'calm', 'alert', 'fired up')}. `
+    + `It ${pick(tone.reward, 'plays it safe', 'takes the odd risk', 'loves a gamble')} `
+    + `and ${pick(tone.punish, 'rarely backs down', 'sometimes backs down', 'backs down easily')} when someone pushes back.`;
 }
 
 const HELD_GAIN = 0.7;
@@ -1495,7 +1491,6 @@ function paintRegions(rec, now) {
     bakeBrain(view, rec.inspection);
     view.baked = rec.inspection;
     rec.captionKey = '';
-    setText(rec.toneNote, toneLine(view.tone));
   }
   const replay = replayHot(now, rec.brainT0 || now, view.hot, view.replay);
   applyGains(view.uniforms, replay, view.hot);
@@ -1524,30 +1519,37 @@ function disposeView(rec) {
   rec.view = null;
 }
 
+const DOING = { fold: 'folding', check: 'checking', call: 'calling', bet: 'betting', raise: 'raising' };
+const RANK_NAME = { T: '10', J: 'Jack', Q: 'Queen', K: 'King', A: 'Ace' };
+const BAND_WORDS = {
+  premium: 'a great starting hand',
+  strong: 'a strong starting hand',
+  playable: 'a decent starting hand',
+  weak: 'a weak starting hand',
+};
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** "54o (weak)" -> "5-4 in different suits, a weak starting hand"; postflop names are already words. */
+function handWords(decision) {
+  const name = String(decision.handName || '');
+  const pre = name.match(/^([2-9TJQKA])([2-9TJQKA])([so]?)\b/);
+  if (!pre) {
+    if (!name) return 'its cards';
+    if (/^\w+ high$/.test(name)) return `nothing but ${name}`;
+    if (!/^(pair|straight|full|royal|broadway)|flush$/.test(name)) return name;
+    return `${/^[aeiou8]/.test(name) ? 'an' : 'a'} ${name}`;
+  }
+  const rank = (c) => RANK_NAME[c] || c;
+  const cards = pre[1] === pre[2]
+    ? `a pair of ${rank(pre[1])}s`
+    : `${rank(pre[1])}-${rank(pre[2])} ${pre[3] === 's' ? 'of the same suit' : 'in different suits'}`;
+  return `${cards}, ${BAND_WORDS[decision.handCategory] || 'a starting hand'}`;
+}
+
 function thoughtLine(inspection) {
   const decision = inspection?.decision;
-  const reasons = Array.isArray(decision?.reasons) ? decision.reasons.map((line) => String(line)) : [];
-  if (!decision?.action || !reasons.length) return 'Nothing to weigh yet.';
-  const body = reasons.filter((line) => !line.startsWith('Chose') && !line.startsWith('Circuit readout'));
-  const hand = body.find((line) => line.startsWith('Hand:'));
-  const equity = body.find((line) => line.startsWith('Equity'));
-  const weigh = body.find((line) => (
-    /bluff|pressure|Weak|Strong|Close|fold|bet|invested|Large bet/i.test(line)
-    && !line.startsWith('Hand:')
-    && !line.startsWith('Equity')
-  ));
-  const bits = [];
-  if (hand) bits.push(hand.slice(6).trim());
-  if (equity) {
-    const match = equity.match(/(\d+)% vs pot odds (\d+)%/);
-    bits.push(match ? `${match[1]}% equity against ${match[2]}% pot odds` : equity.replace(/^Equity estimate /, '').trim());
-  }
-  let line = bits.length ? `Weighing ${bits.join(', ')}.` : '';
-  if (weigh) line = line ? `${line} ${weigh.endsWith('.') ? weigh : `${weigh}.`}` : (weigh.endsWith('.') ? weigh : `${weigh}.`);
-  if (line) return line;
-  const fallback = body[body.length - 1];
-  if (fallback) return fallback.endsWith('.') ? fallback : `${fallback}.`;
-  return `Leaning toward ${decision.action}.`;
+  if (!decision?.action) return 'Nothing to weigh yet.';
+  return `${capital(DOING[decision.action] || decision.action)} with ${handWords(decision)}.`;
 }
 
 function spanOf(before, after) {
@@ -1632,38 +1634,49 @@ function decisionText(inspection) {
   const decision = inspection?.decision;
   const situation = inspection?.situation || {};
   if (!decision?.action) {
-    return {
-      hand: 'No hand is in front of this fly.',
-      why: 'No scores yet.',
-      executed: 'No action has been executed.',
-      activations: 'Activations are quiet.',
-    };
+    return { hand: 'No hand is in front of this fly.', why: '', executed: '', activations: '' };
   }
-  const hole = cardText(situation.hole) || 'hole cards not on this step';
-  const board = cardText(situation.board) || 'no board';
-  const street = situation.street || decision.street || 'unknown street';
-  const legal = (situation.legal || decision.legal || []).join(', ') || 'legal actions were not recorded';
-  const logits = situation.logits || decision.logits;
-  let why = 'No numeric scores on this decision.';
-  if (logits && typeof logits === 'object') {
-    const rows = Object.entries(logits).filter(([, value]) => Number.isFinite(value) && value > -1e8);
-    rows.sort((a, b) => b[1] - a[1]);
-    const chosen = logits[decision.action];
-    const alt = rows.find(([name]) => name !== decision.action);
-    if (Number.isFinite(chosen) && alt) why = `${decision.action} scored ${chosen.toFixed(2)}, ahead of ${alt[0]} at ${alt[1].toFixed(2)}.`;
-    else if (Number.isFinite(chosen)) why = `${decision.action} scored ${chosen.toFixed(2)}. No alternative score is recorded.`;
-  }
-  const { nodes, activity } = modelOf(inspection);
-  const means = sectionMeans(nodes, activity);
-  const activations = activity.some((value) => value !== 0)
-    ? LAYERS.map((layer) => `${LAYER_TITLE[layer]} ${means[layer].toFixed(2)}`).join(' · ')
-    : 'Activations are quiet on this step.';
-  const amount = Number.isFinite(decision.amount) && decision.amount > 0 ? ` ${decision.amount}` : '';
+  const board = cardText(situation.board);
+  const win = Math.round((decision.equityEstimate || 0) * 100);
+  const need = Math.round((decision.potOdds || 0) * 100);
+  const pricey = win + 5 < need;
+  const cheap = win >= need + 5;
+  const anyway = pricey && (decision.action === 'bet' || decision.action === 'raise') ? ` It ${decision.action}s anyway, hoping the others fold.`
+    : pricey && decision.action === 'call' ? ' It calls anyway.'
+    : cheap && decision.action === 'fold' ? ' It folds anyway.'
+    : '';
+  const why = !(decision.toCall > 0)
+    ? `It guesses it wins about ${win} times in 100, and nobody has bet, so staying in is free.`
+    : `It guesses it wins about ${win} times in 100. Calling ${decision.toCall} chips only pays off if it wins at least ${need} in 100, so `
+      + (cheap ? 'the price is worth it.' : pricey ? 'the price is too high.' : "it's a close call.") + anyway;
+
+  const logits = situation.logits || decision.logits || {};
+  const mine = logits[decision.action];
+  const [alt, altScore] = Object.entries(logits)
+    .filter(([name, value]) => name !== decision.action && Number.isFinite(value) && value > -1e8)
+    .sort((a, b) => b[1] - a[1])[0] || [];
+  const doing = DOING[decision.action] || decision.action;
+  const other = DOING[alt] || alt;
+  const gap = mine - altScore;
+  const sure = !alt || !Number.isFinite(gap) ? ''
+    : gap >= 1 ? `It wasn't torn: ${doing} felt much better than ${other}.`
+    : gap >= 0.3 ? `${capital(doing)} felt a bit better than ${other}.`
+    : gap >= 0 ? `It nearly went with ${other} instead.`
+    : `${capital(other)} actually felt slightly better, but flies aren't perfectly predictable.`;
+
+  const reasons = (decision.reasons || []).map(String);
+  const copying = reasons.find((line) => /^(Copying|Following) /.test(line));
+  const facing = reasons.map((line) => line.match(/^(\w+)'s learned aggression/)).find(Boolean);
+  const social = copying
+    ? copying.replace(/ \(copy strength [^)]*\)/, '').replace(/^Copying (\w+)'s (\w+)/, "It's copying $1, who chose to $2")
+      .replace(/^Following (\w+)'s style; .*/, "It's playing like $1, who hasn't moved yet") + '.'
+    : facing ? `It's also thinking about how pushy ${facing[1]} has been.` : '';
+
   return {
-    hand: `${street}: ${hole}. Board ${board}. Legal: ${legal}.`,
+    hand: board ? `On the table: ${board}.` : 'No shared cards are on the table yet.',
     why,
-    executed: `The engine executed ${decision.action}${amount}.`,
-    activations,
+    executed: sure,
+    activations: social,
   };
 }
 
@@ -1694,6 +1707,7 @@ function paintChrome(rec) {
   rec.why.textContent = brief.why;
   rec.executed.textContent = brief.executed;
   rec.activations.textContent = brief.activations;
+  rec.toneNote.textContent = inspection.decision?.action ? toneLine(toneOf(inspection)) : '';
   rec.path.textContent = firedPath(inspection);
   rec.compare.textContent = compareText(inspection);
   const learned = learnedLines(inspection);
