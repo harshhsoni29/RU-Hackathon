@@ -41,12 +41,12 @@ export const STYLE_META = Object.freeze({
 const KEYS = ['vpip', 'pfr', 'aggression', 'bluff', 'foldToPressure', 'learnRate'];
 
 export const DEFAULT_STYLES = Object.freeze({
-  vera: Object.freeze({ vpip: 0.22, pfr: 0.18, aggression: 2.4, bluff: 0.12, foldToPressure: 0.62, learnRate: 0.05 }),
-  buzz: Object.freeze({ vpip: 0.36, pfr: 0.28, aggression: 3.1, bluff: 0.3, foldToPressure: 0.4, learnRate: 0.06 }),
-  nib: Object.freeze({ vpip: 0.11, pfr: 0.07, aggression: 0.55, bluff: 0.02, foldToPressure: 0.8, learnRate: 0.04 }),
-  callie: Object.freeze({ vpip: 0.52, pfr: 0.08, aggression: 0.4, bluff: 0.03, foldToPressure: 0.16, learnRate: 0.05 }),
-  mani: Object.freeze({ vpip: 0.7, pfr: 0.58, aggression: 5.5, bluff: 0.58, foldToPressure: 0.1, learnRate: 0.07 }),
-  soni: Object.freeze({ vpip: 0.34, pfr: 0.2, aggression: 1.9, bluff: 0.18, foldToPressure: 0.45, learnRate: 0.05 }),
+  vera: Object.freeze({ vpip: 0.22, pfr: 0.18, aggression: 2.4, bluff: 0.12, foldToPressure: 0.62, learnRate: 0.15 }),
+  buzz: Object.freeze({ vpip: 0.36, pfr: 0.28, aggression: 3.1, bluff: 0.3, foldToPressure: 0.4, learnRate: 0.18 }),
+  nib: Object.freeze({ vpip: 0.11, pfr: 0.07, aggression: 0.55, bluff: 0.02, foldToPressure: 0.8, learnRate: 0.12 }),
+  callie: Object.freeze({ vpip: 0.52, pfr: 0.08, aggression: 0.4, bluff: 0.03, foldToPressure: 0.16, learnRate: 0.15 }),
+  mani: Object.freeze({ vpip: 0.7, pfr: 0.58, aggression: 5.5, bluff: 0.58, foldToPressure: 0.1, learnRate: 0.21 }),
+  soni: Object.freeze({ vpip: 0.34, pfr: 0.2, aggression: 1.9, bluff: 0.18, foldToPressure: 0.45, learnRate: 0.15 }),
 });
 
 function clamp(x, lo, hi) {
@@ -62,7 +62,7 @@ export function clampStyle(raw) {
     aggression: clamp(raw.aggression, 0, 20),
     bluff: clamp(raw.bluff, 0, 1),
     foldToPressure: clamp(raw.foldToPressure, 0, 1),
-    learnRate: clamp(raw.learnRate, 0, 0.2),
+    learnRate: clamp(raw.learnRate, 0, 0.5),
   };
 }
 
