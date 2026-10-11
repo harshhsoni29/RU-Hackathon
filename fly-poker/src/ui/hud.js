@@ -146,6 +146,7 @@ export function mountHud() {
             <span class="who"></span>
             <span class="chips"></span>
             <span class="meta"></span>
+            <span class="hand"></span>
           </button>
         </div>`).join('');
       document.dispatchEvent(new CustomEvent('seats-built'));
@@ -162,7 +163,22 @@ export function mountHud() {
       plate.querySelector('.who').textContent = seat.name;
       plate.querySelector('.chips').textContent = seat.stack;
       plate.querySelector('.meta').textContent = (STYLE[seat.style] || seat.style || '') + (seat.following ? ` · copying ${seat.following}` : '');
+      const handHtml = (seat.holeCards || []).map(cardChip).join('');
+      const handEl = plate.querySelector('.hand');
+      if (handEl.dataset.html !== handHtml) {
+        handEl.dataset.html = handHtml;
+        handEl.innerHTML = handHtml;
+      }
     });
+  }
+
+  const SUIT_GLYPH = { h: '♥', d: '♦', c: '♣', s: '♠' };
+  function cardChip(card) {
+    const rank = card?.rank ?? card?.code?.[0];
+    const suit = String(card?.suit ?? card?.code?.[1] ?? '').toLowerCase();
+    if (!rank || !SUIT_GLYPH[suit]) return '';
+    const red = suit === 'h' || suit === 'd' ? ' red' : '';
+    return `<span class="pcard${red}">${esc(rank === 'T' ? '10' : rank)}${SUIT_GLYPH[suit]}</span>`;
   }
 
   let shownKey = null;

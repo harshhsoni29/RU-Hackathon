@@ -313,6 +313,24 @@ button.ghost { background: transparent; }
 .plate.acting { outline: 1px solid var(--fly, var(--brass)); }
 .plate.picked { background: #4a2c1c; }
 .plate.folded { opacity: 0.55; }
+.plate { grid-template-columns: auto minmax(0, 1fr) auto; }
+.plate .who { grid-column: 1; grid-row: 1; }
+.plate .hand { grid-column: 2; grid-row: 1; display: flex; gap: 3px; justify-content: flex-start; align-items: center; }
+.plate .chips { grid-column: 3; grid-row: 1; }
+.plate .meta { grid-column: 1 / -1; grid-row: 2; }
+.plate .hand:empty { display: none; }
+.pcard {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #f6efe4;
+  color: #1b1410;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.pcard.red { color: #c23b22; }
+.plate.folded .pcard { background: #8a8a8a; color: #5c5c5c; }
+.plate.folded .pcard.red { color: #5c5c5c; }
 
 .error {
   position: absolute;
