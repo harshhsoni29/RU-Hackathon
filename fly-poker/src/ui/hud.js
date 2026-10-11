@@ -46,6 +46,7 @@ export function mountHud() {
         <p class="street" data-street>Waiting</p>
         <p class="sub" data-sub>Click a fly to open its brain</p>
         <p class="betline" data-betline></p>
+        <div class="board-row" data-board aria-label="Community cards"></div>
       </div>
       <div class="potline">
         <p class="pot" data-pot>Pot 0</p>
@@ -77,6 +78,7 @@ export function mountHud() {
   const sub = root.querySelector('[data-sub]');
   const pot = root.querySelector('[data-pot]');
   const note = root.querySelector('[data-note]');
+  const boardRow = root.querySelector('[data-board]');
   const log = root.querySelector('[data-log]');
   const stats = root.querySelector('[data-stats]');
   const error = root.querySelector('[data-error]');
@@ -128,6 +130,7 @@ export function mountHud() {
     note.textContent = state?.handNumber ? `Hand ${state.handNumber}` : 'No hand yet';
     deal.disabled = busy || !state?.canDeal;
     next.disabled = busy || !live;
+    boardRow.innerHTML = (state?.board || []).map(cardChip).join('');
     paintLog(state);
     paintStats(state, selectedId);
   }
