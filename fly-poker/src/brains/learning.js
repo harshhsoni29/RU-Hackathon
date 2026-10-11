@@ -7,6 +7,9 @@
 import { MOTOR0, nodeId } from './circuit.js';
 import { smoothedRates } from './styles.js';
 
+const STYLE_BAND = 0.25;              // bluff and fold-to-pressure may drift this far from the base style
+const AGG_BAND = [0.5, 1.75];         // aggression stays within these multiples of the base style
+
 function clamp(x, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
 }
@@ -112,11 +115,14 @@ export function learnFromHand(fly, info) {
     }
   }
   const magnitude = Math.min(1, Math.abs(chipsDelta) / (10 * bb));
-  if (learnRate > 0 && chipsDelta < 0 && topFoe) {
+  const myCalls = events.filter((ev) => ev.id === selfId && ev.action === 'call').length;
+  const lostToHeat = chipsDelta < 0 && topFoe && myCalls > 0;
+  const callPaid = chipsDelta > 0 && myCalls > 0;
+  if (learnRate > 0 && (lostToHeat || callPaid)) {
     const before = fly.params.foldToPressure;
-    const step = learnRate * magnitude * 0.35;
-    const lo = Math.max(0, fly.base.foldToPressure - 0.12);
-    const hi = Math.min(1, fly.base.foldToPressure + 0.12);
+    const step = learnRate * magnitude * 0.35 * (lostToHeat ? 1 : -1);
+    const lo = Math.max(0, fly.base.foldToPressure - STYLE_BAND);
+    const hi = Math.min(1, fly.base.foldToPressure + STYLE_BAND);
     const after = clamp(before + step, lo, hi);
     fly.params.foldToPressure = after;
     pushDelta(
@@ -124,25 +130,33 @@ export function learnFromHand(fly, info) {
       'foldToPressure',
       before,
       after,
-      `lost ${-chipsDelta} while ${names[topFoe] || topFoe} bet or raised ${topRaises} time(s)`,
+      lostToHeat
+        ? `called and lost ${-chipsDelta} while ${names[topFoe] || topFoe} bet or raised ${topRaises} time(s)`
+        : `won ${chipsDelta} after calling ${myCalls} time(s)`,
     );
   }
   const myBets = events.filter((ev) => ev.id === selfId && (ev.action === 'bet' || ev.action === 'raise')).length;
-  if (learnRate > 0 && chipsDelta > 0 && myBets > 0) {
+  if (learnRate > 0 && chipsDelta !== 0 && myBets > 0) {
     const before = fly.params.aggression;
-    const step = learnRate * magnitude * before * 0.5;
-    const lo = fly.base.aggression * 0.75;
-    const hi = fly.base.aggression * 1.35;
+    const step = learnRate * magnitude * before * 0.5 * Math.sign(chipsDelta);
+    const lo = fly.base.aggression * AGG_BAND[0];
+    const hi = fly.base.aggression * AGG_BAND[1];
     const after = clamp(before + step, lo, hi);
     fly.params.aggression = after;
-    pushDelta(deltas, 'aggression', before, after, `won ${chipsDelta} with ${myBets} bet(s) or raise(s)`);
+    pushDelta(
+      deltas,
+      'aggression',
+      before,
+      after,
+      `${chipsDelta > 0 ? 'won' : 'lost'} ${Math.abs(chipsDelta)} with ${myBets} bet(s) or raise(s)`,
+    );
   }
   const bluffed = pending.some((decision) => decision.bluff);
   if (learnRate > 0 && bluffed && chipsDelta !== 0) {
     const before = fly.params.bluff;
     const step = learnRate * Math.sign(chipsDelta) * 0.25 * magnitude;
-    const lo = Math.max(0, fly.base.bluff - 0.12);
-    const hi = Math.min(1, fly.base.bluff + 0.12);
+    const lo = Math.max(0, fly.base.bluff - STYLE_BAND);
+    const hi = Math.min(1, fly.base.bluff + STYLE_BAND);
     const after = clamp(before + step, lo, hi);
     fly.params.bluff = after;
     pushDelta(
