@@ -27,7 +27,7 @@ const LOGO = `
   </g>
 </svg>`;
 
-export function mountTitle(onEnter) {
+export function mountTitle(onEnter, onShop = () => {}) {
   const root = document.createElement('section');
   root.id = 'title';
   root.innerHTML = `
@@ -45,6 +45,7 @@ export function mountTitle(onEnter) {
         <li><i style="background:#7b5cd6"></i> Soni</li>
       </ul>
       <button type="button" data-enter>Take the rail</button>
+      <button type="button" class="title-shop" data-shop>🪽 Wing Shop</button>
     </div>
   `;
   document.body.appendChild(root);
@@ -53,6 +54,7 @@ export function mountTitle(onEnter) {
     root.hidden = true;
     onEnter();
   });
+  root.querySelector('[data-shop]').addEventListener('click', () => onShop());
   return {
     root,
     isOpen() {

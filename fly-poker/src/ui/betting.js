@@ -18,6 +18,8 @@
 // locked and the betting UI slides away until the next hand is over. During auto-play, offer() pops
 // up a "!" for 3 s instead; click it in time and a window opens, otherwise play carries on.
 
+import { BASE_BANKROLL } from './shop.js';
+
 const DEFAULTS = {
   apiBase: 'http://127.0.0.1:8000',
   playerNames: [],
@@ -54,7 +56,13 @@ export function initBetting(options = {}) {
     toastKind: '',
     result: null,
     online: true,
+    // wing-shop run tracking: a run starts with startRun() and ends when the player goes broke
+    runActive: false,
+    peak: 0,
+    revivesLeft: 0,
+    bonusNote: '',
   };
+  const shop = cfg.shop || null;
   const listeners = [];
   let engineKey = 'dev-engine-key';
   let toastTimer = 0;
@@ -121,15 +129,85 @@ export function initBetting(options = {}) {
         await loadMyBets();
         if (statusChanged && (round.status === 'settled' || round.status === 'cancelled')) {
           if (state.myBets.length) state.lastBets = state.myBets.map((b) => ({ seat: b.seat, amount: b.amount }));
+          if (round.status === 'settled') await applyShopBonuses();
           showResult();
         }
       }
+      trackPeak();
       listeners.forEach((fn) => fn(round));
     } catch (e) {
       state.online = false;
       state.offlineWhy = e.message;
     }
     render();
+  }
+
+  // ---------------------------------------------------------------- wing shop: runs and permanent buffs
+  const inPlay = () => state.myBets.filter((b) => b.status === 'active').reduce((s, b) => s + b.amount, 0);
+
+  function trackPeak() {
+    if (state.runActive) state.peak = Math.max(state.peak, state.balance + inPlay());
+  }
+
+  async function credit(amount) {
+    if (amount <= 0) return;
+    const r = await api('/users/' + state.userId + '/deposit', { method: 'POST', body: { amount } });
+    state.balance = r.balance;
+  }
+
+  // Lucky Payout adds to profit on a won round; Fly Insurance refunds part of a lost stake.
+  async function applyShopBonuses() {
+    state.bonusNote = '';
+    if (!shop || !state.runActive || !state.myBets.length) return;
+    const staked = state.myBets.reduce((s, b) => s + b.amount, 0);
+    const paid = state.myBets.reduce((s, b) => s + (b.payout || 0), 0);
+    const net = paid - staked;
+    try {
+      if (net > 0 && shop.mods.winBonus) {
+        const extra = Math.floor(net * shop.mods.winBonus);
+        await credit(extra);
+        if (extra) state.bonusNote = ' Lucky Payout: +' + money(extra) + '.';
+      } else if (net < 0 && shop.mods.lossRefund) {
+        const back = Math.floor(-net * shop.mods.lossRefund);
+        await credit(back);
+        if (back) state.bonusNote = ' Fly Insurance: ' + money(back) + ' back.';
+      }
+    } catch { /* offline or deposits disabled: skip the bonus */ }
+  }
+
+  // Begin a run: the bankroll resets to the base amount plus Fat Wallet.
+  async function startRun() {
+    state.runActive = false;
+    if (!shop) return;
+    try {
+      if (!state.userId) await ensureUser();
+      const amount = BASE_BANKROLL + shop.mods.startBonus;
+      const r = await api('/users/' + state.userId + '/set-balance', { method: 'POST', body: { amount } });
+      state.balance = r.balance;
+    } catch (e) { say(e.message, 'err'); }
+    state.peak = state.balance;
+    state.revivesLeft = shop.mods.revives;
+    state.runActive = true;
+    render();
+  }
+
+  // Out of chips: spend a Second Wind if any are left, otherwise the run is over.
+  async function handleBust() {
+    state.runActive = false;     // guards against re-entry while requests are in flight
+    if (state.revivesLeft > 0) {
+      state.revivesLeft--;
+      try {
+        const r = await api('/users/' + state.userId + '/set-balance', { method: 'POST', body: { amount: 50000 } });
+        state.balance = r.balance;
+        say('Second Wind! Fresh $500. ' + state.revivesLeft + ' left this run.', 'ok');
+      } catch (e) { say(e.message, 'err'); }
+      state.runActive = true;
+      render();
+      return;
+    }
+    const peak = state.peak;
+    const { wings } = shop.endRun(peak);
+    shop.showRunOver({ wings, peak }, async () => { await startRun(); poll(); });
   }
 
   // ---------------------------------------------------------------- feedback
@@ -152,7 +230,7 @@ export function initBetting(options = {}) {
       state.result = { kind: 'refund', title: 'Hand called off', big: money(staked), sub: 'Your stake is back in your bankroll.' };
     } else {
       const net = paid - staked;
-      const tail = winners + ' took the pot.' + (paid > 0 ? ' ' + money(paid) + ' paid out.' : '');
+      const tail = winners + ' took the pot.' + (paid > 0 ? ' ' + money(paid) + ' paid out.' : '') + state.bonusNote;
       if (net > 0) state.result = { kind: 'win', title: 'You won', big: '+' + money(net), sub: tail };
       else if (net === 0) state.result = { kind: 'refund', title: 'Broke even', big: money(0), sub: tail };
       else state.result = { kind: 'loss', title: paid > 0 ? 'Down on the hand' : 'Not this time', big: '-' + money(-net), sub: tail };
@@ -308,6 +386,9 @@ export function initBetting(options = {}) {
       if (r && (r.status === 'open' || r.status === 'locked')) await eng('/rounds/' + r.id + '/cancel');
       await eng('/rounds', { players: cfg.playerNames, window_seconds: seconds });   // NPCs spread their bets over this long
       state.setupError = '';
+      if (shop && state.runActive && shop.mods.roundBonus) {   // Pocket Change
+        try { await credit(shop.mods.roundBonus); } catch { /* ignore */ }
+      }
     } catch (e) {
       state.setupError = e.message;
       await poll();
@@ -587,7 +668,8 @@ export function initBetting(options = {}) {
       b.setAttribute('aria-checked', String(state.stake === c));
     });
     const broke = state.online && state.balance < MIN_BET && !hasActiveBets();
-    rebuyBtn.hidden = !broke;
+    rebuyBtn.hidden = !broke || !!shop;   // with the shop, going broke ends the run instead
+    if (broke && shop && state.runActive && state.round && state.round.status !== 'locked') handleBust();
     clearBtn.hidden = !(open && total);
     alertBtn.hidden = ui.phase !== 'prompt';
     panel.toggleAttribute('inert', ui.phase !== 'open');
@@ -647,6 +729,7 @@ export function initBetting(options = {}) {
   return {
     refresh: poll,
     render,
+    startRun,
     ensureOpen,
     openWindow,
     offer,

@@ -14,6 +14,7 @@ import { mountTitle } from './ui/title.js';
 import { mountBetView } from './ui/betview.js';
 import { mountEmoteKey } from './ui/emotekey.js';
 import { initBetting } from './ui/betting.js';
+import { createShop } from './ui/shop.js';
 
 const boot = document.getElementById('boot');
 const canvas = document.getElementById('view');
@@ -115,7 +116,8 @@ try {
   });
 
   // Backend seat N is the Nth fly. betting.js needs the HUD's dock and header mounted first.
-  const betting = initBetting({ playerNames: FLIES.map((fly) => fly.name) });
+  const shop = createShop();
+  const betting = initBetting({ playerNames: FLIES.map((fly) => fly.name), shop });
   const seatOf = (flyId) => FLIES.findIndex((fly) => fly.id === flyId) + 1;
   /** Auto-play: how long a finished hand stays on screen before the "!" bet prompt. */
   const HOLD_MS = 2500;
@@ -127,8 +129,8 @@ try {
     view.controls.autoRotate = false;
     view.controls.reset();
     hud.show();
-    betting.openWindow({ stillWanted: () => !wasLive });
-  });
+    betting.startRun().then(() => betting.openWindow({ stillWanted: () => !wasLive }));
+  }, () => shop.openShop());
   view.controls.autoRotate = true;
   view.controls.autoRotateSpeed = 0.6;
 
