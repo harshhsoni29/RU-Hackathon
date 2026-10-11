@@ -12,6 +12,7 @@ import { mountHud } from './ui/hud.js';
 import { TABLE, createRailView } from './ui/room.js';
 import { mountTitle } from './ui/title.js';
 import { mountBetView } from './ui/betview.js';
+import { mountEmoteKey } from './ui/emotekey.js';
 import { initBetting } from './ui/betting.js';
 
 const boot = document.getElementById('boot');
@@ -107,6 +108,7 @@ try {
   }
 
   const hud = mountHud();
+  mountEmoteKey();
   mountBetView(view, {
     getDealModule: () => dealMod,
     getDealLayer: () => dealLayer,

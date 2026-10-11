@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { TABLE } from './room.js';
+import { setCastTopView } from './flies.js';
 
 export function mountBetView(view, { getDealModule, getDealLayer } = {}) {
   const button = document.createElement('button');
@@ -78,6 +79,7 @@ export function mountBetView(view, { getDealModule, getDealLayer } = {}) {
     button.textContent = 'Rail view';
     button.setAttribute('aria-pressed', 'true');
     button.classList.add('on');
+    setCastTopView(true);
     applyTop();
   }
 
@@ -85,6 +87,7 @@ export function mountBetView(view, { getDealModule, getDealLayer } = {}) {
     if (mode !== 'top' || !saved) return;
     mode = 'rail';
     paintCards('rail');
+    setCastTopView(false);
     camera.up.set(0, 1, 0);
     camera.position.copy(saved.position);
     camera.fov = saved.fov;
