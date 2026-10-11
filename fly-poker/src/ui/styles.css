@@ -295,6 +295,30 @@ button.ghost { background: transparent; }
   .log { display: none; }
 }
 
+/* ================= face key (left-edge drawer) ================= */
+.emote-key {
+  position: absolute; left: 0; top: 50%;
+  display: flex; align-items: center;
+  transform: translate(calc(-100% + 26px), -50%);
+  transition: transform 0.28s ease;
+  pointer-events: auto;
+}
+.emote-key.open { transform: translate(0, -50%); }
+.emote-key-panel {
+  padding: 10px 14px 10px 12px;
+  background: var(--wood); border: 1px solid var(--line); border-left: 0;
+  border-radius: 0 14px 14px 0;
+}
+.emote-key-title { margin: 0 0 6px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.emote-key ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.emote-key li { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+.emote-key img { width: 58px; height: 25px; }
+.emote-key-tab {
+  width: 26px; height: 52px; padding: 0;
+  font-size: 20px; line-height: 1; color: var(--brass);
+  border-left: 0; border-radius: 0 10px 10px 0;
+}
+
 /* ================= betting (merged into the dock) ================= */
 
 /* bankroll + chip picker, top-right of the dock */

@@ -426,28 +426,18 @@ function drawDot(ctx, x, y, r, color) {
   ctx.fill();
 }
 
+/** One stroke: down the stem, then the bowl back up to the top, so the ink never doubles up. */
 function drawD(ctx, x, y, h, color, wobble) {
-  const stem = [];
-  for (let i = 0; i <= 8; i += 1) {
-    const t = i / 8;
-    stem.push([
-      x + Math.sin(t * Math.PI) * wobble,
-      y - h + t * h * 2 + Math.sin(t * 6.2) * wobble * 0.35,
-    ]);
+  const pts = [];
+  for (let i = 0; i <= 5; i += 1) {
+    const t = i / 5;
+    pts.push([x + Math.sin(t * Math.PI) * wobble * 0.4, y - h * 0.85 + t * h * 1.7]);
   }
-  const bowl = [];
-  for (let i = 0; i <= 14; i += 1) {
-    const t = i / 14;
-    const angle = -Math.PI / 2 + t * Math.PI;
-    const rx = h * (0.92 + 0.08 * Math.sin(t * Math.PI));
-    const ry = h * (0.96 + 0.05 * Math.sin(t * 5));
-    bowl.push([
-      x + 2 + Math.cos(angle) * rx,
-      y + Math.sin(angle) * ry + Math.sin(t * 4) * wobble * 0.25,
-    ]);
+  for (let i = 1; i <= 12; i += 1) {
+    const angle = Math.PI / 2 - (i / 12) * Math.PI;
+    pts.push([x + Math.cos(angle) * h * 0.72, y + Math.sin(angle) * h * 0.85]);
   }
-  ink(ctx, stem, h * 0.42, color);
-  ink(ctx, bowl, h * 0.38, color);
+  ink(ctx, pts, h * 0.32, color);
 }
 
 function drawColon(ctx, x, y, h, color) {
@@ -476,19 +466,19 @@ function drawParen(ctx, x, y, h, color) {
   ink(ctx, pts, h * 0.28, color);
 }
 
+/** Two bumps in one stroke, pinched in at the waist. */
 function drawThree(ctx, x, y, h, color) {
   const pts = [];
-  for (let i = 0; i <= 8; i += 1) {
-    const t = i / 8;
-    const angle = -0.85 + t * 2.05;
-    pts.push([x + Math.cos(angle) * h * 0.5, y - h * 0.46 + Math.sin(angle) * h * 0.42]);
+  for (let i = 0; i <= 9; i += 1) {
+    const angle = -2.5 + (i / 9) * 4.07;
+    pts.push([x + Math.cos(angle) * h * 0.4, y - h * 0.43 + Math.sin(angle) * h * 0.42]);
   }
-  for (let i = 0; i <= 8; i += 1) {
-    const t = i / 8;
-    const angle = -0.45 + t * 2.15;
-    pts.push([x + Math.cos(angle) * h * 0.52, y + h * 0.46 + Math.sin(angle) * h * 0.44]);
+  pts.push([x - h * 0.08, y]);
+  for (let i = 0; i <= 9; i += 1) {
+    const angle = -1.57 + (i / 9) * 4.07;
+    pts.push([x + Math.cos(angle) * h * 0.45, y + h * 0.43 + Math.sin(angle) * h * 0.44]);
   }
-  ink(ctx, pts, h * 0.26, color);
+  ink(ctx, pts, h * 0.28, color);
 }
 
 function drawOplus(ctx, x, y, h, color) {
@@ -528,6 +518,41 @@ const EMOTE_PARTS = {
   bust: ['x', '_', 'x'],
 };
 
+/**
+ * Inked left/right extent of a glyph around its draw point (stroke half-width included). Several
+ * glyphs are off-centre (the D's bowl hangs right, the paren sits left), so these faces are packed
+ * edge to edge; x_x and •⊕• keep their fixed slots.
+ */
+const half = (w) => (w + 9) / 2;
+const GLYPH_SPAN = {
+  D: (h) => [-half(h * 0.32), h * 0.72 + half(h * 0.32)],
+  ':': (h) => [-(h * 0.16 + 5), h * 0.18 + 7],
+  '>': (h) => [-(h * 0.42 + half(h * 0.3)), h * 0.46 + half(h * 0.3)],
+  '(': (h) => [-(h * 0.55 + half(h * 0.28)), -h * 0.23 + half(h * 0.28)],
+  3: (h) => [-(h * 0.34 + half(h * 0.28)), h * 0.45 + half(h * 0.28)],
+};
+const PACKED_GAP = 6;
+
+function glyphCenters(parts, cx) {
+  if (!parts.every((part) => GLYPH_SPAN[part])) {
+    const gap = 18;
+    const widths = parts.map((part) => (part === 'D' ? 108 : part === '⊕' ? 78 : 56));
+    let cursor = cx - (widths.reduce((sum, w) => sum + w, 0) + gap * (parts.length - 1)) / 2;
+    return widths.map((w) => {
+      const x = cursor + w / 2;
+      cursor += w + gap;
+      return x;
+    });
+  }
+  const spans = parts.map((part) => GLYPH_SPAN[part](part === 'D' ? 48 : 46));
+  let cursor = cx - (spans.reduce((sum, [l, r]) => sum + r - l, 0) + PACKED_GAP * (parts.length - 1)) / 2;
+  return spans.map(([l, r]) => {
+    const x = cursor - l;
+    cursor += r - l + PACKED_GAP;
+    return x;
+  });
+}
+
 function drawGoofyEmote(ctx, canvas, kind) {
   const parts = EMOTE_PARTS[kind];
   const color = kind === 'bust' ? '#f3c7c7' : '#fff4d4';
@@ -548,15 +573,11 @@ function drawGoofyEmote(ctx, canvas, kind) {
   ctx.closePath();
   ctx.fill();
 
-  const gap = 18;
-  const widths = parts.map((part) => (part === 'D' ? 108 : part === '⊕' ? 78 : 56));
-  const total = widths.reduce((sum, width) => sum + width, 0) + gap * (parts.length - 1);
-  let cursor = cx - total / 2;
+  const centers = glyphCenters(parts, cx);
   parts.forEach((part, index) => {
-    const width = widths[index];
-    const x = cursor + width / 2;
+    const x = centers[index];
     const y = cy + Math.sin(index * 1.7) * (kind === 'fold' ? 8 : 3);
-    const h = part === 'D' ? 58 : 46;
+    const h = part === 'D' ? 48 : 46;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate((index - (parts.length - 1) / 2) * (part === 'D' ? 0.08 : 0.04));
@@ -570,8 +591,16 @@ function drawGoofyEmote(ctx, canvas, kind) {
     else if (part === 'x') drawEx(ctx, 0, 0, h, color);
     else if (part === '_') drawBar(ctx, 0, 0, h, color);
     ctx.restore();
-    cursor += width + gap;
   });
+}
+
+/** The same face the sprite shows, as an image URL (for the emote key). */
+export function emoteImage(kind) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 220;
+  drawGoofyEmote(canvas.getContext('2d'), canvas, kind);
+  return canvas.toDataURL();
 }
 
 function paintEmote(tag, kind) {
@@ -826,6 +855,34 @@ export function placeCast(scene, flies) {
     }
   }
 
+  // Rail view stacks the tag and emote above each fly. From straight overhead they would sit on the fly
+  // and on each other, so the betting view moves the tag below the fly on screen (+Z), the emote out to
+  // the side away from the table (±X, clear of the header and the felt), and enlarges both.
+  const TOP_SCALE = 1.8;
+  for (const seat of seats) {
+    for (const part of [seat.tag, seat.emote]) {
+      part.rail = { position: part.sprite.position.clone(), scale: part.sprite.scale.clone() };
+    }
+  }
+  function setTopView(on) {
+    for (const seat of seats) {
+      seat.pivot.updateWorldMatrix(true, true);
+      const origin = seat.fly.group.getWorldPosition(new THREE.Vector3());
+      const side = origin.x < TABLE.x - 0.1 ? -1 : 1;
+      for (const [part, dx, dz] of [[seat.tag, 0, 0.62], [seat.emote, side * 0.9, 0]]) {
+        const { position, scale } = part.rail;
+        if (!on) {
+          part.sprite.position.copy(position);
+          part.sprite.scale.copy(scale);
+        } else {
+          part.sprite.position.copy(seat.fly.group.worldToLocal(origin.clone().add(new THREE.Vector3(dx, position.y, dz))));
+          part.sprite.scale.set(scale.x * TOP_SCALE, scale.y * TOP_SCALE, 1);
+        }
+        if (part === seat.emote) part.baseY = part.sprite.position.y;
+      }
+    }
+  }
+
   faceTable();
   const cast = {
     seats,
@@ -833,6 +890,7 @@ export function placeCast(scene, flies) {
     faceTable,
     updateTags,
     setFlyEmote,
+    setTopView,
     tick,
     pickables: () => seats.map((seat) => seat.pivot),
   };
@@ -841,6 +899,11 @@ export function placeCast(scene, flies) {
 }
 
 let activeCast = null;
+
+/** Betting view on/off: re-place name tags and emotes so they read from overhead. */
+export function setCastTopView(on) {
+  activeCast?.setTopView(on);
+}
 
 /** main.js can force a face. Folded and won from updateTags still take priority. */
 export function setFlyEmote(id, kind) {

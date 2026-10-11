@@ -60,7 +60,7 @@ const PART_LINE = {
 };
 const DEFAULT_ORBIT = { azimuth: 0, polar: Math.PI / 2, radius: 4.6, panX: 0, panY: 0 };
 const BRAIN_SCALE = 1;
-const NARRATE_URL = 'http://127.0.0.1:8767/api/narrate';
+const NARRATE_URL = '/api/narrate';
 const QUIET = 0.02;
 const STEP_MS = 1500;
 
