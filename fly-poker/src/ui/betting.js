@@ -5,7 +5,7 @@
 // fills those bet cards with the house's fixed odds, a one-click "Bet" button and a "−" to take
 // money back, and adds a bankroll / chip picker / "Clear bets" to the dock ([data-bet-bar]) and
 // the round status to the header ([data-betline]). A winning bet pays stake x odds (split pots
-// divide that by the number of winners).
+// divide that by the number of winners). Each card also shows how many NPC bettors are on that fly.
 //
 //   import { initBetting } from './ui/betting.js';
 //   const betting = initBetting({ playerNames: FLIES.map((f) => f.name) });
@@ -21,7 +21,7 @@
 const DEFAULTS = {
   apiBase: 'http://127.0.0.1:8000',
   playerNames: [],
-  pollMs: 1500,
+  pollMs: 600,           // fast enough that NPC bets visibly trickle in
   windowSeconds: 10,     // length of a betting window
   promptMs: 2000,        // how long the "!" stays up during auto-play
   dev: new URLSearchParams(location.search).has('dev'),
@@ -302,11 +302,11 @@ export function initBetting(options = {}) {
   }
 
   // A fresh round for a new window. Anything still open or locked is cancelled (and refunded) first.
-  async function openRound() {
+  async function openRound(seconds = cfg.windowSeconds) {
     try {
       const r = await latest();
       if (r && (r.status === 'open' || r.status === 'locked')) await eng('/rounds/' + r.id + '/cancel');
-      await eng('/rounds', { players: cfg.playerNames });
+      await eng('/rounds', { players: cfg.playerNames, window_seconds: seconds });   // NPCs spread their bets over this long
       state.setupError = '';
     } catch (e) {
       state.setupError = e.message;
@@ -324,7 +324,7 @@ export function initBetting(options = {}) {
     if (stillWanted && !stillWanted()) return 'aborted';
     finishOffer(false);
     abortWindow();
-    if (!(await openRound())) return 'offline';
+    if (!(await openRound(seconds))) return 'offline';
     if (stillWanted && !stillWanted()) { await cancelRound(); return 'aborted'; }
     ui.roundId = state.round && state.round.id;
     ui.endsAt = Date.now() + seconds * 1000;
@@ -606,7 +606,9 @@ export function initBetting(options = {}) {
       const odds = info && info.odds;
       const pays = (stake) => money(Math.floor(stake * Math.round(odds * 100) / 100));
       c.odds.textContent = odds ? odds.toFixed(2) : '–';
-      c.pool.textContent = odds ? money(state.stake) + ' pays ' + pays(state.stake) : '';
+      const crowd = (info && info.npcs) || 0;   // NPC bettors backing this fly
+      c.pool.textContent = odds ? money(state.stake) + ' pays ' + pays(state.stake) + ' · ' + crowd + (crowd === 1 ? ' NPC' : ' NPCs') : '';
+      c.pool.title = crowd + (crowd === 1 ? ' NPC has' : ' NPCs have') + ' bet on ' + nameOf(seat);
       c.mineText.textContent = mineBySeat[seat] ? 'Your bet ' + money(mineBySeat[seat]) + (odds ? ' · pays ' + pays(mineBySeat[seat]) : '') : '';
       c.mine.hidden = !mineBySeat[seat];
       c.less.disabled = !open;

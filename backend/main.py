@@ -9,6 +9,11 @@ the way a sportsbook prices a poker broadcast:
   - A winning bet pays stake x odds. A losing bet loses the stake.
   - Split pots use the dead-heat rule: with k winners, a winning bet pays stake x odds / k.
   - While betting is open, a bettor can take money off any bet or clear all of their bets.
+  - NUM_NPCS computer bettors share the table. When a round opens each one plans a bet for a moment
+    inside the betting window: "random" NPCs pick any fly, "odds" NPCs back the favourites. The bets
+    land gradually, build up late, and every remaining one is placed when betting locks. NPCs are
+    ordinary accounts, so their bets are settled like anyone else's, and the UI shows how many NPCs
+    are on each fly. They never change anyone's odds or payout.
 
 All money is stored as integer cents and odds as integer hundredths. Never use floats for money.
 
@@ -21,6 +26,7 @@ Docs: http://localhost:8000/docs
 
 import json
 import os
+import random
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -42,6 +48,12 @@ MIN_BET = 100                                                   # $1.00
 MAX_BET = 1_000_000                                             # $10,000.00
 NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "6"))                # seats at the table (the fly table seats 6)
 STARTING_BALANCE = int(os.getenv("STARTING_BALANCE", "100000"))  # play-money bankroll for new players ($1,000); 0 = real-money mode
+NUM_NPCS = int(os.getenv("NUM_NPCS", "20"))                     # computer bettors that share the table
+NPC_BANKROLL = int(os.getenv("NPC_BANKROLL", "100000"))         # their starting (and refill) bankroll, $1,000
+NPC_BET_CHANCE = 0.9                                            # chance an NPC bets in a given round
+NPC_WINDOW = float(os.getenv("NPC_WINDOW", "10"))               # seconds NPCs spread their bets over (matches the UI's window)
+NPC_LAST_SECOND = 0.3                                           # share of NPCs that wait for the final second
+NPC_STAKES = [100, 100, 500, 500, 500, 2500, 2500, 10000]       # what an NPC might stake, cents
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"                    # enables /deposit; set 0 in production
 CORS_ORIGINS = os.getenv(
     "CORS_ORIGINS",
@@ -63,7 +75,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT UNIQUE NOT NULL,
-    balance     INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0)
+    balance     INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+    npc         TEXT                                 -- NULL for people; 'random' or 'odds' for computer bettors
 );
 CREATE TABLE IF NOT EXISTS rounds (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +88,14 @@ CREATE TABLE IF NOT EXISTS rounds (
     winner_seats  TEXT,                              -- JSON list, set on settle
     house_take    INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS npc_plans (                -- NPC bets waiting for their moment in the window
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id    INTEGER NOT NULL REFERENCES rounds(id),
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    seat        INTEGER NOT NULL,
+    amount      INTEGER NOT NULL,
+    due         REAL NOT NULL                        -- unix ts the bet is placed
 );
 CREATE TABLE IF NOT EXISTS bets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +125,8 @@ def init_db() -> None:
     conn.executescript(SCHEMA)
     if "odds" not in {c[1] for c in conn.execute("PRAGMA table_info(rounds)")}:
         conn.execute("ALTER TABLE rounds ADD COLUMN odds TEXT")
+    if "npc" not in {c[1] for c in conn.execute("PRAGMA table_info(users)")}:
+        conn.execute("ALTER TABLE users ADD COLUMN npc TEXT")
     conn.close()
 
 
@@ -222,6 +245,8 @@ class SetBalance(BaseModel):
 
 class RoundCreate(BaseModel):
     players: List[str] = Field(min_length=NUM_PLAYERS, max_length=NUM_PLAYERS)
+    window_seconds: Optional[float] = Field(None, ge=0, le=120,
+                                            description="betting window length; NPCs spread their bets over it")
     closes_at: Optional[float] = Field(None, description="unix timestamp; betting auto-closes")
 
 
@@ -251,9 +276,86 @@ def get_round(conn, round_id: int):
     return r
 
 
+def npc_pick_seat(strategy: str, odds: List[int]) -> int:
+    """Seat (1-based) an NPC backs. 'random' ignores the prices; 'odds' follows the market, so the
+    favourite (shortest odds) is backed most often but long shots still get some money."""
+    if strategy == "odds":
+        weights = [(100 / o) ** 2 for o in odds]
+        return random.choices(range(1, len(odds) + 1), weights=weights)[0]
+    return random.randint(1, len(odds))
+
+
+def ensure_npcs(conn) -> None:
+    have = conn.execute("SELECT COUNT(*) FROM users WHERE npc IS NOT NULL").fetchone()[0]
+    for i in range(have, NUM_NPCS):
+        cur = conn.execute("INSERT INTO users (username, npc) VALUES (?,?)",
+                           (f"npc-{i + 1:02d}", "random" if i % 2 == 0 else "odds"))
+        change_balance(conn, cur.lastrowid, NPC_BANKROLL, "bonus", "npc bankroll")
+
+
+def npc_bet_time(window: float) -> float:
+    """Seconds after the round opens that an NPC bets: spread over the window, weighted toward the
+    end, with a share holding out for the last second."""
+    if window <= 0:
+        return 0.0
+    if random.random() < NPC_LAST_SECOND:
+        return max(0.0, window - random.uniform(0.05, 1.0))
+    return max(0.3, window * random.random() ** 0.8 * 0.9)
+
+
+def plan_npc_bets(conn, round_id: int, odds: List[int], window: float) -> None:
+    """When a round opens, each NPC decides whether, on what and for how much it bets, and when.
+    The bets themselves are placed later by run_npc_bets, as their time comes."""
+    if NUM_NPCS <= 0:
+        return
+    ensure_npcs(conn)
+    now = time.time()
+    for n in conn.execute("SELECT id, balance, npc FROM users WHERE npc IS NOT NULL "
+                          "ORDER BY id LIMIT ?", (NUM_NPCS,)).fetchall():
+        balance = n["balance"]
+        if balance < MIN_BET:                       # busted NPCs get a fresh bankroll
+            change_balance(conn, n["id"], NPC_BANKROLL - balance, "rebuy", "npc refill")
+            balance = NPC_BANKROLL
+        if random.random() > NPC_BET_CHANCE:
+            continue
+        stake = min(random.choice(NPC_STAKES), balance)
+        if stake < MIN_BET:
+            continue
+        conn.execute("INSERT INTO npc_plans (round_id, user_id, seat, amount, due) VALUES (?,?,?,?,?)",
+                     (round_id, n["id"], npc_pick_seat(n["npc"], odds), stake, now + npc_bet_time(window)))
+
+
+def run_npc_bets(conn, round_id: int, everything: bool = False) -> None:
+    """Place the NPC bets whose time has come (all of them when betting locks). Only an open round
+    takes bets, and a bet is paid for from the NPC's own bankroll when it is placed."""
+    r = conn.execute("SELECT status FROM rounds WHERE id=?", (round_id,)).fetchone()
+    if not r or r["status"] != "open":
+        return
+    due = conn.execute("SELECT * FROM npc_plans WHERE round_id=?" + ("" if everything else " AND due<=?") +
+                       " ORDER BY due, id", (round_id,) if everything else (round_id, time.time())).fetchall()
+    for d in due:
+        conn.execute("DELETE FROM npc_plans WHERE id=?", (d["id"],))
+        bal = conn.execute("SELECT balance FROM users WHERE id=?", (d["user_id"],)).fetchone()["balance"]
+        if bal < d["amount"]:
+            continue
+        change_balance(conn, d["user_id"], -d["amount"], "bet", f"round:{round_id}")
+        conn.execute("INSERT INTO bets (round_id, user_id, seat, amount, created_at) VALUES (?,?,?,?,?)",
+                     (round_id, d["user_id"], d["seat"], d["amount"], time.time()))
+
+
+def drop_npc_plans(conn, round_id: int) -> None:
+    conn.execute("DELETE FROM npc_plans WHERE round_id=?", (round_id,))
+
+
 def round_view(conn, r) -> dict:
+    run_npc_bets(conn, r["id"])
     bets = [dict(b) for b in conn.execute(
         "SELECT id, seat, amount FROM bets WHERE round_id = ?", (r["id"],))]
+    npcs = {seat: 0 for seat in range(1, NUM_PLAYERS + 1)}      # how many NPCs are on each seat
+    for row in conn.execute(
+            "SELECT b.seat, COUNT(DISTINCT b.user_id) AS n FROM bets b JOIN users u ON u.id = b.user_id "
+            "WHERE b.round_id = ? AND u.npc IS NOT NULL GROUP BY b.seat", (r["id"],)):
+        npcs[row["seat"]] = row["n"]
     pools = pool_totals(bets)
     players = json.loads(r["players"])
     odds = json.loads(r["odds"]) if r["odds"] else [None] * len(players)
@@ -264,7 +366,7 @@ def round_view(conn, r) -> dict:
         "winner_seats": json.loads(r["winner_seats"]) if r["winner_seats"] else None,
         "total_pool": sum(pools.values()),
         "players": [
-            {"seat": s, "name": players[s - 1], "pool": pools.get(s, 0),
+            {"seat": s, "name": players[s - 1], "pool": pools.get(s, 0), "npcs": npcs[s],
              "odds": odds[s - 1] / 100 if odds[s - 1] else None}
             for s in range(1, len(players) + 1)
         ],
@@ -427,11 +529,12 @@ def withdraw(round_id: int, body: Withdraw, user_id: int = Depends(current_user_
 def create_round(body: RoundCreate):
     """Engine calls this when a new hand/game is about to start; opens betting."""
     with tx() as conn:
+        odds = odds_for(conn, body.players)
         cur = conn.execute(
             "INSERT INTO rounds (players, rake_bps, odds, closes_at, created_at) VALUES (?,?,?,?,?)",
-            (json.dumps(body.players), MARGIN_BPS, json.dumps(odds_for(conn, body.players)),
-             body.closes_at, time.time()),
+            (json.dumps(body.players), MARGIN_BPS, json.dumps(odds), body.closes_at, time.time()),
         )
+        plan_npc_bets(conn, cur.lastrowid, odds, NPC_WINDOW if body.window_seconds is None else body.window_seconds)
         return round_view(conn, get_round(conn, cur.lastrowid))
 
 
@@ -442,6 +545,7 @@ def lock_round(round_id: int):
         r = get_round(conn, round_id)
         if r["status"] != "open":
             raise HTTPException(409, f"Round is {r['status']}")
+        run_npc_bets(conn, round_id, everything=True)         # the last-second rush: every NPC still waiting bets now
         conn.execute("UPDATE rounds SET status='locked' WHERE id=?", (round_id,))
         return round_view(conn, get_round(conn, round_id))
 
@@ -470,6 +574,7 @@ def settle_round(round_id: int, body: SettleRequest):
             if pay > 0:
                 change_balance(conn, b["user_id"], pay, "payout", f"round:{round_id}:bet:{b['id']}")
 
+        drop_npc_plans(conn, round_id)
         conn.execute(
             "UPDATE rounds SET status='settled', winner_seats=?, house_take=? WHERE id=?",
             (json.dumps(sorted(winners)), house_take, round_id),
@@ -490,6 +595,7 @@ def cancel_round(round_id: int):
             change_balance(conn, b["user_id"], b["amount"], "refund", f"round:{round_id}:bet:{b['id']}")
             conn.execute("UPDATE bets SET payout=?, status='refunded' WHERE id=?",
                          (b["amount"], b["id"]))
+        drop_npc_plans(conn, round_id)
         conn.execute("UPDATE rounds SET status='cancelled' WHERE id=?", (round_id,))
         return round_view(conn, get_round(conn, round_id))
 

@@ -15,7 +15,7 @@ Starting stack 20000 chips. bb/100 uses the table big blind (10).
 
 ## Seed 42 — 1000 hands
 
-281 ms, 3560 hands/s, 10855 steps. Starting stack 20000.
+516 ms, 1936 hands/s, 10855 steps. Starting stack 20000.
 
 | fly | chips | delta | bb/100 | hands played | hands won | entry rate |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -27,7 +27,7 @@ Starting stack 20000 chips. bb/100 uses the table big blind (10).
 
 ## Seed 99 — 1000 hands
 
-292 ms, 3423 hands/s, 10872 steps. Starting stack 20000.
+422 ms, 2370 hands/s, 10872 steps. Starting stack 20000.
 
 | fly | chips | delta | bb/100 | hands played | hands won | entry rate |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
