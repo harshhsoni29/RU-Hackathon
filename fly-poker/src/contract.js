@@ -15,4 +15,4 @@
  */
 
 export { FLIES, DEALER, DEFAULT_STYLES } from './brains/styles.js';
-export { createTable, dealHand, step, getPublicState, getFlyInspection } from './table.js';
+export { createTable, dealHand, step, getPublicState, getFlyInspection, killFly, sponsorFly } from './table.js';

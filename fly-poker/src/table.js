@@ -268,6 +268,48 @@ export function createTable(config = {}) {
   };
 }
 
+/** A sponsored fly plays like a maniac for a few hands. Applied per decision so learning is untouched. */
+function sponsoredParams(params) {
+  return {
+    ...params,
+    aggression: Math.max(4, params.aggression * 2),
+    bluff: Math.min(0.9, params.bluff + 0.3),
+    foldToPressure: Math.max(0, params.foldToPressure - 0.3),
+  };
+}
+
+const solventCount = (table) => table.flies.filter((fly) => fly.stack > 0).length;
+
+/** Raid Bug Spray: permanently removes a fly (and its chips) between hands. Needs 3+ flies in play. */
+export function killFly(table, flyId) {
+  const fly = table.flies.find((f) => f.id === flyId);
+  if (!fly) return { ok: false, reason: 'No such fly' };
+  if (table.phase !== 'between') return { ok: false, reason: 'Wait for the hand to finish' };
+  if (fly.dead || fly.stack <= 0) return { ok: false, reason: fly.name + ' is already out' };
+  if (solventCount(table) < 3) return { ok: false, reason: 'The table needs at least two flies left' };
+  table.chipConstant -= fly.stack;
+  fly.stack = 0;
+  fly.dead = true;
+  fly.sponsor = null;
+  if (table.showcase) table.showcase.sittingOut[fly.seat] = true;
+  assertChips(table);
+  return { ok: true, name: fly.name };
+}
+
+/** Sponsor: gives a live fly extra chips and makes it play aggressively for the next few hands. */
+export function sponsorFly(table, flyId, chips = 500, hands = 3) {
+  const fly = table.flies.find((f) => f.id === flyId);
+  if (!fly) return { ok: false, reason: 'No such fly' };
+  if (table.phase !== 'between') return { ok: false, reason: 'Wait for the hand to finish' };
+  if (fly.dead) return { ok: false, reason: fly.name + ' has been sprayed' };
+  fly.stack += chips;
+  table.chipConstant += chips;
+  fly.sponsor = { hands };
+  if (table.showcase && fly.stack > 0) table.showcase.sittingOut[fly.seat] = false;
+  assertChips(table);
+  return { ok: true, name: fly.name, chips, hands };
+}
+
 export function dealHand(table) {
   if (table.phase === 'betting') throw new Error('Hand already in progress');
   const solvent = [];
@@ -430,7 +472,8 @@ export function step(table) {
   const legal = legalActions(hand, seat);
   if (legal.length === 0) throw new Error('actor has no legal action');
   const fly = table.flies[seat];
-  const ctx = followContext(table, fly, buildContext(table, seat, legal));
+  const baseCtx = followContext(table, fly, buildContext(table, seat, legal));
+  const ctx = fly.sponsor ? { ...baseCtx, params: sponsoredParams(baseCtx.params) } : baseCtx;
   const decision = decide(ctx);
   const applied = applyAction(hand, seat, decision.action, decision.raiseTo);
   if (ctx.copyTarget) {
@@ -567,6 +610,12 @@ function finishHand(table, result, showdown) {
     notePolicyMove(fly, learned, table.handNumber);
   }
 
+  for (const fly of table.flies) {   // sponsorship wears off by hands
+    if (!fly.sponsor) continue;
+    fly.sponsor.hands -= 1;
+    if (fly.sponsor.hands <= 0) fly.sponsor = null;
+  }
+
   const winners = [];
   const winnerAmounts = new Map();
   for (const pot of settlement.pots) {
@@ -656,6 +705,8 @@ export function getPublicState(table) {
       isBigBlind: bb === i,
       isActor: hand ? hand.actor === i : false,
       stats: publicStats(fly),
+      dead: !!fly.dead,
+      sponsoredHands: fly.sponsor ? fly.sponsor.hands : 0,
       following: fly.mimic && hand ? table.flies.find((other) => other.id === fly.mimic.mentor)?.name || null : null,
     };
   });

@@ -59,6 +59,7 @@ export function initBetting(options = {}) {
     // wing-shop run tracking: a run starts with startRun() and ends when the player goes broke
     runActive: false,
     peak: 0,
+    startBalance: BASE_BANKROLL,
     revivesLeft: 0,
     bonusNote: '',
   };
@@ -186,6 +187,7 @@ export function initBetting(options = {}) {
       state.balance = r.balance;
     } catch (e) { say(e.message, 'err'); }
     state.peak = state.balance;
+    state.startBalance = state.balance;
     state.revivesLeft = shop.mods.revives;
     state.runActive = true;
     render();
@@ -205,9 +207,28 @@ export function initBetting(options = {}) {
       render();
       return;
     }
+    finishRun();
+  }
+
+  function finishRun() {
+    state.runActive = false;
     const peak = state.peak;
-    const { wings } = shop.endRun(peak);
-    shop.showRunOver({ wings, peak }, async () => { await startRun(); poll(); });
+    const { wings } = shop.endRun(peak, state.startBalance);
+    shop.showRunOver({ wings, peak, start: state.startBalance }, async () => {
+      await startRun();
+      if (cfg.onNewRun) cfg.onNewRun();
+      poll();
+    });
+  }
+
+  // "Leave table": cash out the run early. Bets still in play have to be settled (or withdrawn) first.
+  async function leaveTable() {
+    if (!shop || !state.runActive) return;
+    if (isOpen() && hasActiveBets()) await withdraw();
+    if (hasActiveBets()) { say('Wait for your bets to settle before leaving.', 'err'); return; }
+    const peak = Math.max(state.peak, state.balance);
+    state.peak = peak;
+    finishRun();
   }
 
   // ---------------------------------------------------------------- feedback
@@ -730,6 +751,7 @@ export function initBetting(options = {}) {
     refresh: poll,
     render,
     startRun,
+    leaveTable,
     ensureOpen,
     openWindow,
     offer,

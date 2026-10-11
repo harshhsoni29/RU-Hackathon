@@ -5,6 +5,8 @@ import {
   dealHand,
   getFlyInspection,
   getPublicState,
+  killFly,
+  sponsorFly,
   step,
 } from './contract.js';
 import { placeCast, setFlyEmote } from './ui/flies.js';
@@ -117,7 +119,37 @@ try {
 
   // Backend seat N is the Nth fly. betting.js needs the HUD's dock and header mounted first.
   const shop = createShop();
-  const betting = initBetting({ playerNames: FLIES.map((fly) => fly.name), shop });
+  const betting = initBetting({
+    playerNames: FLIES.map((fly) => fly.name),
+    shop,
+    // Another run after going broke: fresh table (sprayed flies come back), fresh betting window.
+    onNewRun: () => {
+      stopAuto();
+      table = createTable({ seed: liveSeed() });
+      winners.clear();
+      wasLive = false;
+      betDeadline = 0;
+      betting.forget();
+      selectedId = null;
+      if (brain && brainMod?.hideBrain) brainMod.hideBrain(brain);
+      shop.resetPowers();
+      refresh();
+      betting.openWindow({ stillWanted: () => !wasLive });
+    },
+  });
+  shop.mountPowers({
+    leave: () => betting.leaveTable(),
+    spray(flyId) {
+      const res = killFly(table, flyId);
+      if (res.ok) { setFlyEmote(flyId, 'bust'); refresh(); }
+      return res;
+    },
+    sponsor(flyId) {
+      const res = sponsorFly(table, flyId);
+      if (res.ok) { setFlyEmote(flyId, 'bet'); refresh(); }
+      return res;
+    },
+  });
   const seatOf = (flyId) => FLIES.findIndex((fly) => fly.id === flyId) + 1;
   /** Auto-play: how long a finished hand stays on screen before the "!" bet prompt. */
   const HOLD_MS = 2500;
@@ -129,6 +161,7 @@ try {
     view.controls.autoRotate = false;
     view.controls.reset();
     hud.show();
+    shop.setPowersActive(true);
     betting.startRun().then(() => betting.openWindow({ stillWanted: () => !wasLive }));
   }, () => shop.openShop());
   view.controls.autoRotate = true;
@@ -157,6 +190,7 @@ try {
     const state = getPublicState(table);
     cast.updateTags(state, winners);
     hud.render(state, { busy, selectedId });
+    shop.updatePowers(state);
     settleBets(state);
     if (selectedId && brain && !brain.hidden && brain.classList.contains('is-open') && brainMod?.showBrain) {
       try {

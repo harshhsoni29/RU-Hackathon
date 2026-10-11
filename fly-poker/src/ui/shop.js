@@ -45,6 +45,16 @@ export const UPGRADES = [
     desc: () => 'Survive going broke once per run with a fresh $500.',
     step: 'One-time: an extra life every run',
   },
+  {
+    id: 'spray', icon: '🧴', name: 'Raid Bug Spray', max: 1, costs: [3], consumable: true,
+    desc: () => 'Ready this run: permanently wipes out one fly of your choice. Single use.',
+    step: 'Consumable: kill one fly this run. Rebuy every run',
+  },
+  {
+    id: 'sponsor', icon: '💼', name: 'Sponsorship Deal', max: 1, costs: [8],
+    desc: () => 'Unlocked: sponsor a fly for +500 chips and 3 hands of aggressive play (4-hand cooldown).',
+    step: 'One-time: unlock the Sponsor button',
+  },
 ];
 
 const money = (c) => '$' + (c / 100).toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -95,6 +105,20 @@ const STYLE = `
 .run-over .big { font-size: 46px; margin: 8px 0 2px; color: #cfe9ff; font-weight: 600; }
 .run-over p { color: #cbbba6; margin: 4px 0; line-height: 1.4; }
 .run-over .shop-foot { justify-content: center; margin-top: 20px; }
+.powers { position: fixed; top: 92px; left: 16px; z-index: 4; width: min(300px, 80vw); padding: 10px 12px;
+  background: rgba(28, 16, 12, 0.88); border: 1px solid rgba(230, 194, 122, 0.4); border-radius: 12px; color: #f6efe4; }
+.powers[hidden] { display: none; }
+.powers-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.power-btn { font: inherit; font-size: 13px; cursor: pointer; padding: 7px 10px; border-radius: 8px;
+  background: #3a2418; color: #f6efe4; border: 1px solid #e6c27a; }
+.power-btn.is-on { background: #1f7a4d; }
+.power-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.power-leave { border-color: #cfe9ff; }
+.powers-hint { margin: 8px 0 0; font-size: 12px; color: #cbbba6; line-height: 1.35; }
+.powers-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.power-fly { font: inherit; font-size: 13px; cursor: pointer; padding: 6px 8px; border-radius: 8px; color: #f6efe4;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--fly); }
+.power-fly:disabled { opacity: 0.35; cursor: not-allowed; }
 .title-shop { margin-left: 10px; background: #3d5a80 !important; }
 `;
 
@@ -131,6 +155,7 @@ export function createShop() {
 
   function closeAll() {
     wrap.hidden = true;
+    renderPowers();
     if (afterClose) { const f = afterClose; afterClose = null; f(); }
   }
 
@@ -153,7 +178,7 @@ export function createShop() {
     const head = el('div', 'shop-head');
     head.append(el('h2', '', 'Wing Shop'), el('span', 'shop-wings', '🪽 ' + data.wings + (data.wings === 1 ? ' wing' : ' wings')));
     card.append(head, el('p', 'shop-sub',
-      'Fly wings are earned when a run ends: one per $1,000 of the most money you held during it. ' +
+      'Fly wings are earned when a run ends: one per $1,000 your bankroll grew past its starting amount, measured at its highest point. ' +
       'Upgrades are permanent and stack on every future run.'));
     const grid = el('div', 'shop-grid');
     for (const up of UPGRADES) {
@@ -161,14 +186,14 @@ export function createShop() {
       const maxed = level >= up.max;
       const item = el('div', 'shop-item');
       const h = el('h3', '', `${up.icon} ${up.name}`);
-      h.append(el('small', '', up.max > 1 ? `  ${level}/${up.max}` : level ? '  Owned' : ''));
+      h.append(el('small', '', up.max > 1 ? `  ${level}/${up.max}` : level ? (up.consumable ? '  Ready' : '  Owned') : ''));
       item.append(h);
       const pips = el('div', 'shop-pips');
       for (let i = 0; i < up.max; i++) pips.append(el('i', i < level ? 'on' : ''));
       item.append(pips);
       item.append(el('p', '', level ? up.desc(level) + (maxed ? '' : ` Next: ${up.step}.`) : (up.max > 1 ? `${up.step} per level.` : `${up.step}.`)));
       const cost = maxed ? 0 : up.costs[level];
-      const b = el('button', 'shop-buy', maxed ? (up.max > 1 ? 'Maxed out' : 'Purchased') : `Buy · 🪽 ${cost}`);
+      const b = el('button', 'shop-buy', maxed ? (up.consumable ? 'Ready for this run' : up.max > 1 ? 'Maxed out' : 'Purchased') : `Buy · 🪽 ${cost}`);
       b.type = 'button';
       b.disabled = maxed || data.wings < cost;
       b.addEventListener('click', () => buy(up.id));
@@ -191,19 +216,23 @@ export function createShop() {
   }
 
   // ------------------------------------------------------------ run end
-  /** Award wings for a finished run. peak is the highest bankroll reached, in cents. */
-  function endRun(peak) {
-    const wings = Math.floor((Math.max(0, peak) * (1 + mods.wingBonus)) / WING_UNIT + 1e-9);
+  // Wings count each full $1,000 gained above the run's starting bankroll, so leaving at once earns nothing.
+  const wingsFor = (peak, start = BASE_BANKROLL) => Math.floor((Math.max(0, peak - start) * (1 + mods.wingBonus)) / WING_UNIT + 1e-9);
+
+  /** Award wings for a finished run. peak is the highest bankroll reached, start the opening bankroll, in cents. */
+  function endRun(peak, start) {
+    const wings = wingsFor(peak, start);
     data.wings += wings;
     data.lifetime += wings;
     data.runs += 1;
     data.best = Math.max(data.best, peak);
+    data.levels.spray = 0;   // consumables do not carry into the next run
     save();
     return { wings, total: data.wings };
   }
 
   /** Run-over screen. onNewRun fires when the player starts another run. */
-  function showRunOver({ wings, peak }, onNewRun) {
+  function showRunOver({ wings, peak, start = BASE_BANKROLL }, onNewRun) {
     mode = 'over';
     card.className = 'shop-card run-over';
     card.replaceChildren();
@@ -213,12 +242,12 @@ export function createShop() {
       el('div', 'big', '🪽 +' + wings),
       el('p', '', wings
         ? `${wings === 1 ? 'A new wing' : wings + ' new wings'} for the shop. You now hold ${data.wings}.`
-        : 'No wings this time. Reach $1,000 of bankroll to earn one.'),
+        : `No wings this time. Grow your bankroll to ${money(start + WING_UNIT)} to earn one.`),
     );
     const foot = el('div', 'shop-foot');
     const shopBtn = el('button', 'shop-close', 'Wing Shop');
     shopBtn.type = 'button';
-    shopBtn.addEventListener('click', () => openShop(() => showRunOver({ wings, peak }, onNewRun)));
+    shopBtn.addEventListener('click', () => openShop(() => showRunOver({ wings, peak, start }, onNewRun)));
     const again = el('button', 'shop-again', 'Start new run');
     again.type = 'button';
     again.addEventListener('click', () => { wrap.hidden = true; onNewRun(); });
@@ -227,8 +256,91 @@ export function createShop() {
     wrap.hidden = false;
   }
 
+  // ------------------------------------------------------------ in-run powers (spray + sponsor)
+  const SPONSOR_COOLDOWN = 4;
+  const powers = { hooks: null, active: false, pick: null, cooldownUntil: 0, state: null, note: '' };
+  const panel = el('div', 'powers');
+  panel.hidden = true;
+  document.body.append(panel);
+
+  function renderPowers() {
+    panel.replaceChildren();
+    const st = powers.state;
+    const hasSpray = lv('spray') > 0;
+    const hasSponsor = lv('sponsor') > 0;
+    panel.hidden = !(powers.active && powers.hooks);
+    if (panel.hidden) return;
+    const live = !!st && st.handLive;
+    const row = el('div', 'powers-row');
+    const leave = el('button', 'power-btn power-leave', '🚪 Leave table');
+    leave.type = 'button';
+    leave.title = 'End this run now and cash in your wings';
+    leave.addEventListener('click', () => powers.hooks.leave());
+    row.append(leave);
+    if (hasSpray) {
+      const b = el('button', 'power-btn', '🧴 Raid Bug Spray');
+      b.type = 'button';
+      b.disabled = live;
+      b.classList.toggle('is-on', powers.pick === 'spray');
+      b.addEventListener('click', () => { powers.pick = powers.pick === 'spray' ? null : 'spray'; renderPowers(); });
+      row.append(b);
+    }
+    if (hasSponsor) {
+      const wait = st ? Math.max(0, powers.cooldownUntil - st.handNumber) : 0;
+      const b = el('button', 'power-btn', wait ? `💼 Sponsor (${wait} hand${wait === 1 ? '' : 's'})` : '💼 Sponsor a fly');
+      b.type = 'button';
+      b.disabled = live || wait > 0;
+      b.classList.toggle('is-on', powers.pick === 'sponsor');
+      b.addEventListener('click', () => { powers.pick = powers.pick === 'sponsor' ? null : 'sponsor'; renderPowers(); });
+      row.append(b);
+    }
+    panel.append(row);
+    if (powers.pick && !live) {
+      panel.append(el('p', 'powers-hint', powers.pick === 'spray' ? 'Pick a fly to spray (this cannot be undone):' : 'Pick a fly to sponsor:'));
+      const list = el('div', 'powers-list');
+      for (const seat of st.seats) {
+        const b = el('button', 'power-fly', seat.name + (seat.sponsoredHands ? ' 💼' : ''));
+        b.type = 'button';
+        b.style.setProperty('--fly', seat.colorHex || '#999');
+        b.disabled = seat.dead || (powers.pick === 'spray' && seat.stack <= 0);
+        b.addEventListener('click', () => usePower(powers.pick, seat.id));
+        list.append(b);
+      }
+      panel.append(list);
+    } else if (powers.pick) {
+      powers.pick = null;
+    }
+    if (powers.note) panel.append(el('p', 'powers-hint', powers.note));
+  }
+
+  function usePower(kind, flyId) {
+    const hooks = powers.hooks;
+    if (kind === 'spray') {
+      const res = hooks.spray(flyId);
+      if (res.ok) {
+        data.levels.spray = 0;
+        save();
+        powers.note = `${res.name} has been sprayed. Gone for good.`;
+      } else powers.note = res.reason;
+    } else {
+      const res = hooks.sponsor(flyId);
+      if (res.ok) {
+        powers.cooldownUntil = (powers.state ? powers.state.handNumber : 0) + SPONSOR_COOLDOWN;
+        powers.note = `${res.name} got +${res.chips} chips and is feeling aggressive for ${res.hands} hands.`;
+      } else powers.note = res.reason;
+    }
+    powers.pick = null;
+    renderPowers();
+  }
+
   return {
     mods,
+    previewWings: wingsFor,
+    /** hooks: { spray(flyId), sponsor(flyId) } each returning { ok, name?, reason? }. */
+    mountPowers(hooks) { powers.hooks = hooks; },
+    setPowersActive(on) { powers.active = on; renderPowers(); },
+    updatePowers(state) { powers.state = state; renderPowers(); },
+    resetPowers() { powers.cooldownUntil = 0; powers.pick = null; powers.note = ''; renderPowers(); },
     openShop,
     endRun,
     showRunOver,
