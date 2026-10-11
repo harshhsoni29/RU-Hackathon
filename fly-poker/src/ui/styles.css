@@ -125,14 +125,14 @@ body::after {
 /* action log: right-edge drawer, mirrors the face key */
 .log-drawer {
   position: absolute; top: 92px; right: 0;
-  display: flex; align-items: flex-start;
+  display: flex; align-items: center;
   transform: translateX(calc(100% - 26px));
   transition: transform 0.28s ease;
   pointer-events: auto;
 }
 .log-drawer.open { transform: translateX(0); }
 .log-tab {
-  flex: 0 0 auto; width: 26px; height: 52px; margin-top: 10px; padding: 0;
+  flex: 0 0 auto; width: 26px; height: 52px; padding: 0;
   font-size: 20px; line-height: 1; color: var(--brass);
   border-right: 0; border-radius: 10px 0 0 10px;
 }
@@ -170,7 +170,7 @@ body::after {
   border-radius: 0 6px 6px 0;
   background: linear-gradient(90deg, color-mix(in srgb, var(--act) 16%, transparent), transparent 75%);
 }
-.log-row:last-child { animation: log-in 0.25s ease-out; }
+.log-row.fresh { animation: log-in 0.25s ease-out; }
 .log-row .who { font-weight: 600; }
 .log-row .amt { color: var(--act); font-variant-numeric: tabular-nums; }
 .log-row[data-act="check"] { --act: #a9b4bd; }

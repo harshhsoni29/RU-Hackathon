@@ -165,26 +165,34 @@ export function mountHud() {
     });
   }
 
+  let shownKey = null;
+  let shownEvents = new Set();
   function paintLog(state) {
     const seats = Object.fromEntries((state?.seats || []).map((seat) => [seat.id, seat]));
-    const events = state?.lastActions || [];
+    const events = (state?.lastActions || []).slice(-14);
+    const ids = events.map((ev, i) => `${ev.handNumber}:${ev.seq ?? i}:${ev.flyId}:${ev.action}`);
+    const key = ids.join('|');
+    if (key === shownKey) return;
+    shownKey = key;
+    const seen = shownEvents;
+    shownEvents = new Set(ids);
     if (!events.length) {
       log.innerHTML = '<p class="log-title">Action log</p><p class="empty">No actions yet. Deal a hand.</p>';
       return;
     }
     const rows = ['<p class="log-title">Action log</p>'];
     let hand = null;
-    for (const ev of events.slice(-14)) {
+    events.forEach((ev, i) => {
       if (ev.handNumber !== hand) {
         hand = ev.handNumber;
         rows.push(`<p class="hand-break"><span>Hand ${esc(hand)}</span></p>`);
       }
       const seat = seats[ev.flyId];
       const accent = seat ? seat.colorHex || `#${Number(seat.color || 0).toString(16).padStart(6, '0')}` : 'var(--ink)';
-      rows.push(`<p class="log-row" data-act="${ev.handEnded ? 'win' : esc(ev.action || '')}">`
+      rows.push(`<p class="log-row${seen.has(ids[i]) ? '' : ' fresh'}" data-act="${ev.handEnded ? 'win' : esc(ev.action || '')}">`
         + `<b class="who" style="color:${esc(accent)}">${esc(seat?.name || ev.flyId || 'Someone')}</b> ${actionText(ev)}`
         + `<span class="st">${esc(ev.street || '')}</span></p>`);
-    }
+    });
     log.innerHTML = rows.join('');
     log.scrollTop = log.scrollHeight;
   }

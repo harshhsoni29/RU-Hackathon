@@ -2047,11 +2047,10 @@ function paintHistory(rec) {
     const facts = narrationFacts(record);
     const key = facts.length ? narrationKey(inspection, record, facts) : '';
     const sentence = key ? rec.narrations?.get(key) : '';
-    const error = key && rec.narrationError?.key === key ? rec.narrationError.text : '';
-    if (sentence || error) {
+    if (sentence) {
       const said = document.createElement('p');
       said.className = 'fly-brain-adapt';
-      said.textContent = sentence || error;
+      said.textContent = sentence;
       item.append(said);
     }
     return item;
@@ -2085,29 +2084,40 @@ function requestNarration(rec) {
     body: JSON.stringify({ facts }),
   }).then(async (response) => {
     const data = await response.json().catch(() => ({}));
+    return response.ok && typeof data.text === 'string' ? data.text.trim() : '';
+  }).catch(() => '').then((text) => {
     if (token !== rec.narrateToken) return;
-    if (!response.ok) {
-      const message = typeof data.error === 'string' && data.error ? data.error : `Narration failed (${response.status}).`;
-      rec.narrationError = { key, text: message };
-      rec.adapt.textContent = message;
-      paintHistory(rec);
-      return;
-    }
-    const text = typeof data.text === 'string' ? data.text.trim() : '';
-    if (!text) {
-      rec.adapt.textContent = 'Plain-language summary unavailable.';
-      return;
-    }
-    rec.narrations.set(key, text);
-    rec.adapt.textContent = text;
-    paintHistory(rec);
-  }).catch((error) => {
-    if (token !== rec.narrateToken) return;
-    const message = error?.message ? String(error.message) : 'Plain-language summary unavailable.';
-    rec.narrationError = { key, text: message };
-    rec.adapt.textContent = message;
+    const said = text || plainLesson(record);
+    rec.narrations.set(key, said);
+    rec.adapt.textContent = said;
     paintHistory(rec);
   });
+}
+
+/** Template wording used whenever Gemini is busy, cooling down, or unreachable. */
+function plainLesson(record) {
+  const deltas = Array.isArray(record?.deltas) ? record.deltas : [];
+  const hand = Number.isFinite(record?.handNumber) ? `After hand ${record.handNumber}` : 'After the last hand';
+  let up = 0;
+  let down = 0;
+  const bits = [];
+  for (const d of deltas) {
+    const parameter = String(d?.parameter || '');
+    const rose = Number(d.delta) > 0;
+    if (parameter.startsWith('gain:')) rose ? up++ : down++;
+    else if (parameter === 'aggression') bits.push(`plays a little ${rose ? 'more' : 'less'} aggressively`);
+    else if (parameter === 'bluff') bits.push(`bluffs a little ${rose ? 'more' : 'less'}`);
+    else if (parameter === 'foldToPressure') bits.push(`folds under pressure a little ${rose ? 'more' : 'less'}`);
+    else if (parameter.startsWith('follow.') || parameter === 'copyStrength') bits.push('copies a different mix of flies');
+  }
+  const links = (n) => `${n} brain connection${n === 1 ? '' : 's'}`;
+  const wires = up && down
+    ? `${links(up)} got stronger and ${down} got weaker`
+    : up ? `${links(up)} got stronger` : down ? `${links(down)} got weaker` : '';
+  const uniq = [...new Set(bits)];
+  if (!wires && !uniq.length) return `${hand}, nothing in its brain changed.`;
+  if (!uniq.length) return `${hand}, ${wires}.`;
+  return `${hand}, ${wires ? `${wires}, and it now ` : 'it now '}${uniq.join(', ')}.`;
 }
 
 function activityKey(inspection) {

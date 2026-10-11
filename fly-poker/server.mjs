@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash'];
+const MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -47,20 +47,17 @@ function scrub(message, key) {
   return (key ? text.split(key).join('GEMINI_KEY') : text).slice(0, 500);
 }
 
-async function generate(model, key, prompt, mode) {
-  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`);
-  const headers = { 'content-type': 'application/json' };
-  if (mode === 'query') url.searchParams.set('key', key);
-  else headers['x-goog-api-key'] = key;
+async function generate(model, key, prompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const response = await fetch(url, {
     method: 'POST',
-    headers,
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: 512,
         temperature: 0.4,
-        thinkingConfig: { thinkingBudget: 0 },
+        ...(model.includes('lite') ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
       },
     }),
     signal: AbortSignal.timeout(12000),
@@ -78,26 +75,58 @@ async function narrate(facts) {
   const prompt = [
     'You describe how a poker-playing fruit fly\'s small learned circuit changed after one hand.',
     'Use only the facts below. Do not add numbers, synapses, or names that are not in the facts.',
-    'Reply with one or two plain sentences.',
+    'Write for a casual viewer with no neuroscience or poker-math background: no decimals, no jargon like "synapse" or "fold-to-pressure".',
+    'Say what changed in its brain in everyday words and what that means for how it will play. Reply with one or two short sentences.',
     '',
     facts.join('\n'),
   ].join('\n');
   let last = 'narrate failed';
+  let tried = 0;
   for (const model of MODELS) {
-    for (const mode of ['header', 'query']) {
-      let result;
-      try {
-        result = await generate(model, key, prompt, mode);
-      } catch (error) {
-        last = scrub(error?.message || error, key);
-        continue;
-      }
-      if (result.ok && result.text) return { text: result.text, model };
-      last = result.message || `Gemini ${result.status}`;
-      if (result.status === 404) break;
+    if (Date.now() < (modelCool.get(model) || 0)) continue;
+    tried++;
+    let result;
+    try {
+      result = await generate(model, key, prompt);
+    } catch (error) {
+      last = scrub(error?.message || error, key);
+      continue;
     }
+    if (result.ok && result.text) return { text: result.text, model };
+    last = result.message || `Gemini ${result.status}`;
+    if (OVERLOAD.has(result.status)) modelCool.set(model, Date.now() + MODEL_COOLDOWN_MS);
+    else if (result.status === 401 || result.status === 403) break;
   }
+  if (!tried || MODELS.every((model) => Date.now() < (modelCool.get(model) || 0))) coolUntil = Date.now() + COOLDOWN_MS;
   throw new Error(last);
+}
+
+const OVERLOAD = new Set([429, 500, 503]);
+const COOLDOWN_MS = 45_000;
+const MODEL_COOLDOWN_MS = 10 * 60_000;
+const modelCool = new Map();
+const MIN_GAP_MS = 2_500;
+const cache = new Map();
+let coolUntil = 0;
+let lastCall = 0;
+let inFlight = false;
+
+/** Cached, one-at-a-time, spaced-out narration. Returns null when skipped so the client uses its own wording. */
+async function narrateGated(facts) {
+  const cacheKey = facts.join('\n');
+  if (cache.has(cacheKey)) return { text: cache.get(cacheKey), model: 'cache' };
+  const now = Date.now();
+  if (inFlight || now < coolUntil || now - lastCall < MIN_GAP_MS) return null;
+  inFlight = true;
+  lastCall = now;
+  try {
+    const result = await narrate(facts);
+    cache.set(cacheKey, result.text);
+    if (cache.size > 300) cache.delete(cache.keys().next().value);
+    return result;
+  } finally {
+    inFlight = false;
+  }
 }
 
 function staticFile(urlPath) {
@@ -126,7 +155,11 @@ const server = http.createServer(async (req, res) => {
         send(res, 400, JSON.stringify({ error: 'no facts' }), 'application/json; charset=utf-8');
         return;
       }
-      const result = await narrate(facts);
+      const result = await narrateGated(facts);
+      if (!result) {
+        send(res, 429, JSON.stringify({ error: 'busy' }), 'application/json; charset=utf-8');
+        return;
+      }
       send(res, 200, JSON.stringify({ text: result.text, model: result.model }), 'application/json; charset=utf-8');
     } catch (error) {
       send(res, 502, JSON.stringify({ error: scrub(error?.message || error, geminiKey()) }), 'application/json; charset=utf-8');
