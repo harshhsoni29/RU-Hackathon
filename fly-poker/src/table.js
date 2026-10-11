@@ -8,6 +8,7 @@ import { decide } from './brains/policy.js';
 import { learnFromHand } from './brains/learning.js';
 import { copyBias, copyTarget, emptyMimic, followShares, learnMimic, pickMentor } from './brains/mimic.js';
 import { createBrain, NODES, CIRCUIT_META } from './brains/circuit.js';
+import { createNeuromodulators } from './brains/neuromodulators.js';
 import {
   FLIES,
   DEALER,
@@ -126,6 +127,7 @@ function buildContext(table, seat, legal) {
   )).length;
   return {
     brain: fly.brain,
+    neuromodulators: fly.neuromodulators,
     style: fly.style,
     params: fly.params,
     hole: player.hole,
@@ -226,7 +228,9 @@ export function createTable(config = {}) {
     base: loaded.styles[meta.id],
     params: { ...loaded.styles[meta.id] },
     brain,
+    neuromodulators: createNeuromodulators(),
     frozenBrain: { edges: brain.edges.map((edge) => ({ ...edge })) },
+    frozenNeuromodulators: createNeuromodulators(),
     frozenParams: { ...loaded.styles[meta.id] },
     policyCompare: {
       decisions: 0,
@@ -449,7 +453,12 @@ export function step(table) {
   shown.allIn = applied.allIn;
   fly.lastDecision = shown;
   fly.lastActivity = decision.activity.slice();
-  const frozen = decide({ ...ctx, brain: fly.frozenBrain, params: fly.mimic ? ctx.params : fly.frozenParams });
+  const frozen = decide({
+    ...ctx,
+    brain: fly.frozenBrain,
+    neuromodulators: fly.frozenNeuromodulators,
+    params: fly.mimic ? ctx.params : fly.frozenParams,
+  });
   fly.policyCompare.decisions += 1;
   if (frozen.action !== applied.action) fly.policyCompare.disagreements += 1;
   const gap = oddsGap(decision.logits, frozen.logits, legal);
@@ -681,6 +690,7 @@ export function getPublicState(table) {
     actorId: hand && hand.actor >= 0 ? table.flies[hand.actor].id : null,
     seats,
     lastActions: table.lastActions.map((ev) => ({
+      seq: ev.seq,
       handNumber: ev.handNumber,
       street: ev.street,
       flyId: ev.flyId,
@@ -874,6 +884,7 @@ export function getFlyInspection(table, flyId) {
       base: { ...fly.base },
       current: { ...fly.params },
     },
+    neuromodulators: { ...fly.neuromodulators },
     profile: strategyProfile(table, fly),
     decision,
     nodes: NODES.map((node) => ({ id: node.id, layer: node.layer, x: node.x, y: node.y, label: node.label })),

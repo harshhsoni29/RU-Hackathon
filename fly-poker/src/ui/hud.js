@@ -186,7 +186,7 @@ export function mountHud() {
   function paintLog(state) {
     const seats = Object.fromEntries((state?.seats || []).map((seat) => [seat.id, seat]));
     const events = (state?.lastActions || []).slice(-14);
-    const ids = events.map((ev, i) => `${ev.handNumber}:${ev.seq ?? i}:${ev.flyId}:${ev.action}`);
+    const ids = events.map((ev) => `${ev.handNumber}:${ev.seq}:${ev.flyId}:${ev.action}`);
     const key = ids.join('|');
     if (key === shownKey) return;
     shownKey = key;
