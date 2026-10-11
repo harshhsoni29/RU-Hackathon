@@ -48,9 +48,9 @@ MIN_BET = 100                                                   # $1.00
 MAX_BET = 1_000_000                                             # $10,000.00
 NUM_PLAYERS = int(os.getenv("NUM_PLAYERS", "6"))                # seats at the table (the fly table seats 6)
 STARTING_BALANCE = int(os.getenv("STARTING_BALANCE", "100000"))  # play-money bankroll for new players ($1,000); 0 = real-money mode
-NUM_NPCS = int(os.getenv("NUM_NPCS", "20"))                     # computer bettors that share the table
+NUM_NPCS = int(os.getenv("NUM_NPCS", "100"))                     # computer bettors that share the table
 NPC_BANKROLL = int(os.getenv("NPC_BANKROLL", "100000"))         # their starting (and refill) bankroll, $1,000
-NPC_BET_CHANCE = 0.9                                            # chance an NPC bets in a given round
+NPC_BET_CHANCE = 1.0                                            # chance an NPC bets in a given round (1.0: every NPC bets, at the latest when betting locks)
 NPC_WINDOW = float(os.getenv("NPC_WINDOW", "10"))               # seconds NPCs spread their bets over (matches the UI's window)
 NPC_LAST_SECOND = 0.3                                           # share of NPCs that wait for the final second
 NPC_STAKES = [100, 100, 500, 500, 500, 2500, 2500, 10000]       # what an NPC might stake, cents
@@ -339,8 +339,19 @@ def run_npc_bets(conn, round_id: int, everything: bool = False) -> None:
         if bal < d["amount"]:
             continue
         change_balance(conn, d["user_id"], -d["amount"], "bet", f"round:{round_id}")
-        conn.execute("INSERT INTO bets (round_id, user_id, seat, amount, created_at) VALUES (?,?,?,?,?)",
-                     (round_id, d["user_id"], d["seat"], d["amount"], time.time()))
+        add_bet(conn, round_id, d["user_id"], d["seat"], d["amount"])
+
+
+def add_bet(conn, round_id: int, user_id: int, seat: int, amount: int) -> int:
+    """Record a stake. Money a bettor puts on the same seat in the same round is one bet that grows,
+    not a pile of small ones. Returns the bet's id."""
+    row = conn.execute("SELECT id FROM bets WHERE round_id=? AND user_id=? AND seat=? AND status='active' "
+                       "ORDER BY id LIMIT 1", (round_id, user_id, seat)).fetchone()
+    if row:
+        conn.execute("UPDATE bets SET amount=amount+? WHERE id=?", (amount, row["id"]))
+        return row["id"]
+    return conn.execute("INSERT INTO bets (round_id, user_id, seat, amount, created_at) VALUES (?,?,?,?,?)",
+                        (round_id, user_id, seat, amount, time.time())).lastrowid
 
 
 def drop_npc_plans(conn, round_id: int) -> None:
@@ -481,12 +492,9 @@ def place_bet(body: BetCreate, user_id: int = Depends(current_user_id)):
     with tx() as conn:
         r = open_round(conn, body.round_id)
         change_balance(conn, user_id, -body.amount, "bet", f"round:{body.round_id}")
-        cur = conn.execute(
-            "INSERT INTO bets (round_id, user_id, seat, amount, created_at) VALUES (?,?,?,?,?)",
-            (body.round_id, user_id, body.seat, body.amount, time.time()),
-        )
+        bet_id = add_bet(conn, body.round_id, user_id, body.seat, body.amount)
         bal = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()[0]
-        return {"bet_id": cur.lastrowid, "balance": bal, "round": round_view(conn, r)}
+        return {"bet_id": bet_id, "balance": bal, "round": round_view(conn, r)}
 
 
 @app.post("/rounds/{round_id}/withdraw")

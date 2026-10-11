@@ -128,7 +128,7 @@ The API reads these environment variables. The defaults are set up for local pla
 | --- | --- | --- |
 | `NUM_PLAYERS` | `5` | Seats at the table. Must match the number of flies. |
 | `STARTING_BALANCE` | `100000` | New players' bankroll in cents ($1,000). `0` turns off free bankrolls and rebuys. |
-| `NUM_NPCS` | `20` | Computer bettors at the table. `0` turns them off. |
+| `NUM_NPCS` | `100` | Computer bettors at the table. `0` turns them off. |
 | `NPC_WINDOW` | `10` | Seconds NPCs spread their bets over when the game doesn't say (the game sends its own window length). |
 | `NPC_BANKROLL` | `100000` | An NPC's starting and refill bankroll in cents ($1,000). |
 | `RAKE_BPS` | `500` | House rake in basis points (500 = 5%). |
